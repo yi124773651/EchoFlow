@@ -19,6 +19,10 @@
             <groupId>com.echoflow</groupId>
             <artifactId>echoflow-domain</artifactId>
         </dependency>
+        <dependency>
+            <groupId>com.echoflow</groupId>
+            <artifactId>echoflow-application</artifactId>
+        </dependency>
 
         <!-- Persistence -->
         <dependency>
@@ -39,12 +43,11 @@
             <artifactId>flyway-database-postgresql</artifactId>
         </dependency>
 
-        <!-- AI (Spring AI Alibaba) — uncomment when ready
+        <!-- AI (Spring AI OpenAI-compatible) -->
         <dependency>
-            <groupId>com.alibaba.cloud.ai</groupId>
-            <artifactId>spring-ai-alibaba-starter</artifactId>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-starter-model-openai</artifactId>
         </dependency>
-        -->
 
         <!-- Test -->
         <dependency>

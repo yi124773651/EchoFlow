@@ -70,6 +70,15 @@ Follow this order:
 - Thought / Action / Observation / Error must be persisted in `ExecutionLog` or equivalent.
 - LLM output is untrusted input and must be validated.
 - Every model call must define timeout, bounded retry, and fallback/degradation.
+- **MCP Tooling Strategy**:
+  - **exa-mcp-server**: 优先用于深度技术调研、库文档检索及 RAG 增强。
+  - **grok-search**: 优先用于获取最新的 Java/Spring 生态资讯、实时 Bug 追踪或 CVE 漏洞更新。
+  - **morph-mcp**: 用于辅助分析当前项目的静态代码结构，辅助 DDD 边界检查。
+  - **context7**: 用于在处理长会话或大规模重构时，检索历史决策和上下文片段。
+- **MCP Execution**:
+  - 所有 MCP 调用视为 `External Integration`，必须遵循 **Rule 4**（严禁在数据库事务中调用）。
+  - MCP 返回的非结构化数据在进入 Domain 前必须经过验证并转换为 `record` DTO。
+  - 严禁通过 MCP 直接执行未经审计的写操作（如 `rm`, `push`）。
 
 ## 9. Data Rules
 - All schema changes go through Flyway.
@@ -86,11 +95,14 @@ Follow this order:
 - Streaming UIs must use real streaming/SSE; polling is forbidden.
 
 ## 11. Commands
-- `/vibe-check`
-- `/tdd-step [feature]`
-- `/document-domain`
-- `/sync-api [entity|endpoint]`
-- `/check-lock`
+- `/vibe-check`:让 AI 对当前项目进行“全局扫描”。它会检查你的代码是否背离了约束。
+- `/tdd-step [feature]`:启动 Rule 6 定义的 TDD 流程。
+- `/document-domain`:自动化文档化。AI 会扫描 domain 包，提取聚合根（Aggregate）、实体（Entity）和值对象（Value Object）。
+- `/sync-api [entity|endpoint]`:确保 Rule 10（API 契约一致性）。
+- `/check-lock`:专门针对 Rule 4 和 Rule 9 的并发安全检查。
+- `/mcp-research [topic]` : 调用 Exa/Grok 获取最佳实践，输出为 `docs/research/` 下的 markdown。
+- `/mcp-scan` : 调用 Morph-MCP 扫描当前项目，检查是否违反 DDD 依赖方向（Rule 4）。
+- `/mcp-audit-logs` : 检查 `ExecutionLog` 中最近的 MCP 调用耗时与异常。
 
 ## 12. Details
 See:
@@ -98,3 +110,12 @@ See:
 - `docs/claude/agent.md`
 - `docs/claude/frontend.md`
 - `docs/claude/ops.md`
+
+## 13. Workflow & Devlog Rules 
+- Context Sync: Before any feature implementation, read the latest entries in docs/devlog/.
+- Documentation Debt: No code is "done" until the corresponding devlog entry is written.
+- Log Format: Use XXX-description.md (e.g., 002-auth-impl.md) containing:
+  - Progress: Tasks completed.
+  - DDD Decisions: Why specific boundaries or patterns were chosen.
+  - Technical Notes: Java 21 features used, AI prompt tweaks, etc.
+  - Next Steps: Immediate pending items.

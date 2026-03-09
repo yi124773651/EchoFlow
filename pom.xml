@@ -30,7 +30,7 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
 
         <!-- Dependency versions not managed by Spring Boot parent -->
-        <spring-ai.version>1.0.0-M7</spring-ai.version>
+        <spring-ai.version>1.0.0</spring-ai.version>
     </properties>
 
     <dependencyManagement>
@@ -60,6 +60,8 @@
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>
+
+            <!-- OpenAI-compatible model starter (version managed by Spring AI BOM) -->
         </dependencies>
     </dependencyManagement>
 
