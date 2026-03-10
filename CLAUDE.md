@@ -57,8 +57,8 @@ Follow this order:
 6. Optimize performance only with evidence
 
 ## 3. Fixed Stack
-- Backend: Java 21, Spring Boot 3.4+, Spring MVC, Virtual Threads
-- AI: Spring AI 1.0 (OpenAI-compatible endpoint)
+- Backend: Java 21, Spring Boot 3.5+, Spring MVC, Virtual Threads
+- AI: Spring AI 1.1+ (OpenAI-compatible + DashScope via Spring AI Alibaba)
 - Build: Maven 3.9+ (wrapper included: `./mvnw`)
 - DB: PostgreSQL 16+, pgvector, Flyway
 - Persistence: Spring Data JPA by default
@@ -85,7 +85,7 @@ echoflow/                          (root aggregator pom)
 
 - **Domain** (`com.echoflow.domain`): Aggregates (`Task`, `Execution`), entities (`ExecutionStep`), value objects (`TaskId`, `StepLog`, enums), repository interfaces. No Spring, no JPA, no HTTP.
 - **Application** (`com.echoflow.application`): Use cases (`SubmitTaskUseCase`, `ExecuteTaskUseCase`), port interfaces (`TaskPlannerPort`, `StepExecutorPort`, `ExecutionEventPublisher`), commands/results as records. Owns transaction boundaries via `TransactionOperations` (programmatic) or `@Transactional` (declarative, only on methods called externally through Spring proxy).
-- **Infrastructure** (`com.echoflow.infrastructure`): JPA entities + repository implementations in `persistence/`, LLM executors in `ai/` (`StepExecutorRouter` routes by `StepType` to `LlmThinkExecutor`, `LlmResearchExecutor`, `LlmWriteExecutor`, `LogNotifyExecutor`). Only `StepExecutorRouter` is public; internal executors are package-private.
+- **Infrastructure** (`com.echoflow.infrastructure`): JPA entities + repository implementations in `persistence/`, LLM executors in `ai/` (`StepExecutorRouter` routes by `StepType` to `LlmThinkExecutor`, `LlmResearchExecutor`, `LlmWriteExecutor`, `LlmNotifyExecutor`). Only `StepExecutorRouter` is public; internal executors are package-private.
 - **Web** (`com.echoflow.web`): Thin controllers, `GlobalExceptionHandler` (`@RestControllerAdvice` → `ProblemDetail`), `SseExecutionEventPublisher` (SSE streaming), `ClockConfig`. Flyway migrations in `src/main/resources/db/migration/`. Prompt templates in `src/main/resources/prompts/*.st`.
 
 ### Domain Model (two aggregate roots)
@@ -207,9 +207,9 @@ See:
 - **Update on Completion**: After implementation, update the plan's 完成时间 and 状态 fields.
 
 ## 15. Workflow & Devlog Rules
-- Context Sync: Before any feature implementation, read the latest entries in docs/devlog/.
+- Context Sync: Before any feature implementation, read the latest entries in `docs/devlog/` (MVP-era logs archived in `docs/devlog/mvp-archived/`).
 - Documentation Debt: No code is "done" until the corresponding devlog entry is written.
-- Log Format: Use XXX-description.md (e.g., 002-auth-impl.md) containing:
+- Log Format: Use XXX-description.md (e.g., 011-version-upgrade.md) containing:
   - Progress: Tasks completed.
   - DDD Decisions: Why specific boundaries or patterns were chosen.
   - Technical Notes: Java 21 features used, AI prompt tweaks, etc.
