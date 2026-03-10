@@ -8,6 +8,8 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.Resource;
 import org.springframework.stereotype.Component;
 
+import java.time.Duration;
+
 /**
  * Routes step execution to the appropriate executor based on {@link com.echoflow.domain.execution.StepType}.
  *
@@ -25,10 +27,20 @@ public class StepExecutorRouter implements StepExecutorPort {
     public StepExecutorRouter(ChatClient.Builder chatClientBuilder,
                               @Value("classpath:prompts/step-think.st") Resource thinkPrompt,
                               @Value("classpath:prompts/step-research.st") Resource researchPrompt,
-                              @Value("classpath:prompts/step-write.st") Resource writePrompt) {
+                              @Value("classpath:prompts/step-write.st") Resource writePrompt,
+                              @Value("${echoflow.github.api-base-url:https://api.github.com}") String githubBaseUrl,
+                              @Value("${echoflow.github.token:}") String githubToken,
+                              @Value("${echoflow.github.connect-timeout:5s}") Duration githubConnectTimeout,
+                              @Value("${echoflow.github.read-timeout:10s}") Duration githubReadTimeout,
+                              @Value("${echoflow.github.max-results:5}") int githubMaxResults) {
         var chatClient = chatClientBuilder.build();
+        var gitHubSearchTool = new GitHubSearchTool(
+                githubBaseUrl, githubToken,
+                githubConnectTimeout, githubReadTimeout,
+                githubMaxResults);
+
         this.thinkExecutor = new LlmThinkExecutor(chatClient, thinkPrompt);
-        this.researchExecutor = new LlmResearchExecutor(chatClient, researchPrompt);
+        this.researchExecutor = new LlmResearchExecutor(chatClient, researchPrompt, gitHubSearchTool);
         this.writeExecutor = new LlmWriteExecutor(chatClient, writePrompt);
         this.notifyExecutor = new LogNotifyExecutor();
     }

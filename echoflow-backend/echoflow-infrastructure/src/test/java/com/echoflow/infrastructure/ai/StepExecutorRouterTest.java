@@ -13,6 +13,7 @@ import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.core.io.Resource;
 
+import java.time.Duration;
 import java.util.List;
 import java.util.function.Consumer;
 
@@ -35,12 +36,16 @@ class StepExecutorRouterTest {
         when(chatClientBuilder.build()).thenReturn(chatClient);
         lenient().when(chatClient.prompt()).thenReturn(requestSpec);
         lenient().when(requestSpec.user(any(Consumer.class))).thenReturn(requestSpec);
+        lenient().when(requestSpec.tools(any(Object.class))).thenReturn(requestSpec);
 
         Resource thinkPrompt = new ByteArrayResource("think {taskDescription} {stepName}".getBytes());
         Resource researchPrompt = new ByteArrayResource("research {taskDescription} {stepName} {previousContext}".getBytes());
         Resource writePrompt = new ByteArrayResource("write {taskDescription} {stepName} {previousContext}".getBytes());
 
-        router = new StepExecutorRouter(chatClientBuilder, thinkPrompt, researchPrompt, writePrompt);
+        router = new StepExecutorRouter(
+                chatClientBuilder, thinkPrompt, researchPrompt, writePrompt,
+                "https://api.github.com", "",
+                Duration.ofSeconds(5), Duration.ofSeconds(10), 5);
     }
 
     @Test
@@ -64,6 +69,17 @@ class StepExecutorRouterTest {
         var result = router.execute(context);
 
         assertThat(result.output()).isEqualTo("Research findings");
+    }
+
+    @Test
+    void research_step_registers_tools() {
+        when(requestSpec.call()).thenReturn(callSpec);
+        when(callSpec.content()).thenReturn("Research with tools");
+
+        var context = new StepExecutionContext("task desc", "调研", StepType.RESEARCH, List.of());
+        router.execute(context);
+
+        verify(requestSpec).tools(any(GitHubSearchTool.class));
     }
 
     @Test
