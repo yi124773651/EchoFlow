@@ -202,6 +202,50 @@ class ExecutionTest {
                 .isThrownBy(() -> new StepLog(LogType.THOUGHT, "  ", NOW));
     }
 
+    // --- Skip (degradation) ---
+
+    @Test
+    void skipStep_transitions_running_step_to_skipped() {
+        var exec = aRunningExecution();
+        var step = exec.startNextStep();
+        exec.skipStep(step.id(), "LLM timeout after 2 retries");
+
+        assertThat(step.status()).isEqualTo(StepStatus.SKIPPED);
+        assertThat(step.output()).isEqualTo("LLM timeout after 2 retries");
+    }
+
+    @Test
+    void markCompleted_succeeds_with_skipped_steps() {
+        var exec = aRunningExecutionWithTwoSteps();
+        var step1 = exec.startNextStep();
+        exec.completeStep(step1.id(), "done");
+        var step2 = exec.startNextStep();
+        exec.skipStep(step2.id(), "degraded");
+
+        exec.markCompleted(LATER);
+
+        assertThat(exec.status()).isEqualTo(ExecutionStatus.COMPLETED);
+    }
+
+    @Test
+    void hasPendingSteps_false_after_skip() {
+        var exec = aRunningExecution();
+        var step = exec.startNextStep();
+        exec.skipStep(step.id(), "degraded");
+
+        assertThat(exec.hasPendingSteps()).isFalse();
+    }
+
+    @Test
+    void skipStep_from_completed_throws() {
+        var exec = aRunningExecution();
+        var step = exec.startNextStep();
+        exec.completeStep(step.id(), "done");
+
+        assertThatThrownBy(() -> exec.skipStep(step.id(), "too late"))
+                .isInstanceOf(IllegalExecutionStateException.class);
+    }
+
     // --- Helpers ---
 
     private Execution aPlanningExecution() {

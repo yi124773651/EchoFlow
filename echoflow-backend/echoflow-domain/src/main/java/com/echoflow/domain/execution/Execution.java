@@ -98,6 +98,14 @@ public class Execution {
     }
 
     /**
+     * Skip the currently running step (degradation).
+     */
+    public void skipStep(StepId stepId, String reason) {
+        requireRunning();
+        findStep(stepId).markSkipped(reason);
+    }
+
+    /**
      * Append a log entry to a running step.
      */
     public void appendStepLog(StepId stepId, StepLog log) {

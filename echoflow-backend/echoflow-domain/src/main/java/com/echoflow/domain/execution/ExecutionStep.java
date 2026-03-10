@@ -70,11 +70,15 @@ public class ExecutionStep {
     }
 
     /**
-     * Skip this step (e.g. conditional step not needed).
+     * Skip this step (e.g. LLM degradation after retry exhaustion).
      */
-    void markSkipped() {
-        requireStatus(StepStatus.PENDING, StepStatus.SKIPPED);
+    void markSkipped(String reason) {
+        if (this.status != StepStatus.PENDING && this.status != StepStatus.RUNNING) {
+            throw new IllegalExecutionStateException(
+                    "Step " + id + " cannot transition from " + status + " to SKIPPED");
+        }
         this.status = StepStatus.SKIPPED;
+        this.output = reason;
     }
 
     /**

@@ -32,6 +32,9 @@ public sealed interface ExecutionEvent {
     record StepFailed(ExecutionId executionId, StepId stepId,
                       String reason, Instant timestamp) implements ExecutionEvent {}
 
+    record StepSkipped(ExecutionId executionId, StepId stepId,
+                       String reason, Instant timestamp) implements ExecutionEvent {}
+
     record ExecutionCompleted(ExecutionId executionId, Instant timestamp) implements ExecutionEvent {}
 
     record ExecutionFailed(ExecutionId executionId, String reason, Instant timestamp) implements ExecutionEvent {}

@@ -9,6 +9,7 @@ const STATUS_ICON: Record<string, string> = {
   PENDING: "\u25CB",   // ○
   RUNNING: "\u25D4",   // ◔
   COMPLETED: "\u25CF", // ●
+  SKIPPED: "\u26A0",   // ⚠
   FAILED: "\u2716",    // ✖
 };
 
@@ -27,7 +28,9 @@ function StepCard({ step }: { step: StepState }) {
         ? "text-blue-600"
         : step.status === "FAILED"
           ? "text-red-600"
-          : "text-muted-foreground";
+          : step.status === "SKIPPED"
+            ? "text-yellow-600"
+            : "text-muted-foreground";
 
   return (
     <div className="rounded-lg border border-border p-4">
@@ -71,6 +74,14 @@ function StepCard({ step }: { step: StepState }) {
       {step.output && step.status === "FAILED" && (
         <div className="mt-3 pl-7">
           <p className="text-xs text-red-600">{step.output}</p>
+        </div>
+      )}
+
+      {step.output && step.status === "SKIPPED" && (
+        <div className="mt-3 pl-7">
+          <p className="text-xs text-yellow-600">
+            {"\u26A0"} 此步骤已降级跳过: {step.output}
+          </p>
         </div>
       )}
     </div>

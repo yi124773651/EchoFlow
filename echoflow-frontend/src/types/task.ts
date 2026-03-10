@@ -91,6 +91,13 @@ export interface StepCompletedEvent {
   timestamp: string;
 }
 
+export interface StepSkippedEvent {
+  executionId: { value: string };
+  stepId: { value: string };
+  reason: string;
+  timestamp: string;
+}
+
 export interface ExecutionCompletedEvent {
   executionId: { value: string };
   timestamp: string;

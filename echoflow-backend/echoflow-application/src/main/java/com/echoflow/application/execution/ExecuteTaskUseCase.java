@@ -135,6 +135,11 @@ public class ExecuteTaskUseCase {
 
                     completeStep(execution, step.id(), result.output());
                     previousOutputs.add(result.output());
+                } catch (StepExecutionException e) {
+                    appendLog(execution, step.id(), LogType.ERROR,
+                            "Step degraded: " + e.getMessage(), clock.instant());
+                    skipStep(execution, step.id(), e.getMessage());
+                    // Skipped step output not added to previousOutputs — continue to next step
                 } catch (Exception e) {
                     appendLog(execution, step.id(), LogType.ERROR,
                             e.getMessage(), clock.instant());
@@ -169,6 +174,13 @@ public class ExecuteTaskUseCase {
         execution.failStep(stepId, reason);
         executionRepository.save(execution);
         eventPublisher.publish(new ExecutionEvent.StepFailed(
+                execution.id(), stepId, reason, clock.instant()));
+    }
+
+    private void skipStep(Execution execution, StepId stepId, String reason) {
+        execution.skipStep(stepId, reason);
+        executionRepository.save(execution);
+        eventPublisher.publish(new ExecutionEvent.StepSkipped(
                 execution.id(), stepId, reason, clock.instant()));
     }
 

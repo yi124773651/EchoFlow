@@ -18,7 +18,7 @@ export type StepState = {
   order: number;
   name: string;
   type: string;
-  status: "PENDING" | "RUNNING" | "COMPLETED" | "FAILED";
+  status: "PENDING" | "RUNNING" | "COMPLETED" | "SKIPPED" | "FAILED";
   output: string | null;
   logs: { type: LogType; content: string; timestamp: string }[];
 };
@@ -47,7 +47,7 @@ function snapshotToState(exec: ExecutionSnapshot): ExecutionState {
       order: s.order,
       name: s.name,
       type: s.type,
-      status: s.status === "SKIPPED" ? "FAILED" : s.status as StepState["status"],
+      status: s.status as StepState["status"],
       output: s.output,
       logs: s.logs.map((l) => ({
         type: l.type,
@@ -170,6 +170,18 @@ export function useExecutionStream(taskId: string | null) {
           steps: prev.steps.map((s) =>
             s.stepId === data.stepId.value
               ? { ...s, status: "FAILED", output: data.reason }
+              : s,
+          ),
+        }));
+      });
+
+      es.addEventListener("StepSkipped", (e) => {
+        const data = JSON.parse(e.data);
+        setState((prev) => ({
+          ...prev,
+          steps: prev.steps.map((s) =>
+            s.stepId === data.stepId.value
+              ? { ...s, status: "SKIPPED", output: data.reason }
               : s,
           ),
         }));

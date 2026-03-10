@@ -162,7 +162,7 @@ class ExecuteTaskUseCaseTest {
     }
 
     @Test
-    void execute_fails_when_step_executor_throws() {
+    void execute_fails_on_unexpected_exception() {
         var taskId = TaskId.generate();
         var task = Task.submit(taskId, "fail task", NOW);
         when(taskRepository.findById(taskId)).thenReturn(Optional.of(task));
@@ -170,7 +170,7 @@ class ExecuteTaskUseCaseTest {
                 new TaskPlannerPort.PlannedStep("分析", StepType.THINK)
         ));
         when(stepExecutor.execute(any()))
-                .thenThrow(new StepExecutionException("LLM timeout"));
+                .thenThrow(new RuntimeException("unexpected NPE"));
 
         useCase.execute(taskId);
 
@@ -178,6 +178,80 @@ class ExecuteTaskUseCaseTest {
         assertThat(publishedEvents.stream()
                 .filter(e -> e instanceof ExecutionEvent.ExecutionFailed)
                 .count()).isEqualTo(1);
+    }
+
+    @Test
+    void execute_degrades_when_step_execution_fails() {
+        var taskId = TaskId.generate();
+        var task = Task.submit(taskId, "degraded task", NOW);
+        when(taskRepository.findById(taskId)).thenReturn(Optional.of(task));
+        when(taskPlanner.planSteps("degraded task")).thenReturn(List.of(
+                new TaskPlannerPort.PlannedStep("分析", StepType.THINK),
+                new TaskPlannerPort.PlannedStep("调研", StepType.RESEARCH),
+                new TaskPlannerPort.PlannedStep("撰写", StepType.WRITE)
+        ));
+
+        when(stepExecutor.execute(argThat(ctx ->
+                ctx != null && ctx.stepType() == StepType.THINK)))
+                .thenReturn(new StepOutput("分析结果"));
+        when(stepExecutor.execute(argThat(ctx ->
+                ctx != null && ctx.stepType() == StepType.RESEARCH)))
+                .thenThrow(new StepExecutionException("LLM timeout"));
+        when(stepExecutor.execute(argThat(ctx ->
+                ctx != null && ctx.stepType() == StepType.WRITE)))
+                .thenReturn(new StepOutput("报告内容"));
+
+        useCase.execute(taskId);
+
+        // Task completed (not failed) despite one step being skipped
+        assertThat(task.status()).isEqualTo(TaskStatus.COMPLETED);
+
+        var eventTypes = publishedEvents.stream()
+                .map(e -> e.getClass().getSimpleName())
+                .toList();
+        assertThat(eventTypes).contains("StepSkipped");
+        assertThat(eventTypes.getLast()).isEqualTo("ExecutionCompleted");
+        assertThat(eventTypes.stream().filter(t -> t.equals("StepCompleted")).count()).isEqualTo(2);
+        assertThat(eventTypes.stream().filter(t -> t.equals("StepSkipped")).count()).isEqualTo(1);
+
+        // All 3 steps were attempted
+        verify(stepExecutor, times(3)).execute(any(StepExecutionContext.class));
+    }
+
+    @Test
+    void execute_skipped_step_output_not_in_previous_outputs() {
+        var taskId = TaskId.generate();
+        var task = Task.submit(taskId, "skip output test", NOW);
+        when(taskRepository.findById(taskId)).thenReturn(Optional.of(task));
+        when(taskPlanner.planSteps("skip output test")).thenReturn(List.of(
+                new TaskPlannerPort.PlannedStep("分析", StepType.THINK),
+                new TaskPlannerPort.PlannedStep("调研", StepType.RESEARCH),
+                new TaskPlannerPort.PlannedStep("撰写", StepType.WRITE)
+        ));
+
+        when(stepExecutor.execute(argThat(ctx ->
+                ctx != null && ctx.stepType() == StepType.THINK)))
+                .thenReturn(new StepOutput("分析结果"));
+        when(stepExecutor.execute(argThat(ctx ->
+                ctx != null && ctx.stepType() == StepType.RESEARCH)))
+                .thenThrow(new StepExecutionException("LLM timeout"));
+        when(stepExecutor.execute(argThat(ctx ->
+                ctx != null && ctx.stepType() == StepType.WRITE)))
+                .thenReturn(new StepOutput("报告"));
+
+        useCase.execute(taskId);
+
+        // Verify WRITE step only received THINK output, not the skipped RESEARCH output
+        var captor = ArgumentCaptor.forClass(StepExecutionContext.class);
+        verify(stepExecutor, times(3)).execute(captor.capture());
+        var contexts = captor.getAllValues();
+
+        // THINK: no previous
+        assertThat(contexts.get(0).previousOutputs()).isEmpty();
+        // RESEARCH: has THINK output (then throws)
+        assertThat(contexts.get(1).previousOutputs()).containsExactly("分析结果");
+        // WRITE: only THINK output (RESEARCH was skipped)
+        assertThat(contexts.get(2).previousOutputs()).containsExactly("分析结果");
     }
 
     @Test
