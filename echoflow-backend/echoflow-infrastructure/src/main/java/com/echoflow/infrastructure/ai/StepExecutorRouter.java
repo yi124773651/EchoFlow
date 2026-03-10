@@ -22,27 +22,33 @@ public class StepExecutorRouter implements StepExecutorPort {
     private final LlmThinkExecutor thinkExecutor;
     private final LlmResearchExecutor researchExecutor;
     private final LlmWriteExecutor writeExecutor;
-    private final LogNotifyExecutor notifyExecutor;
+    private final LlmNotifyExecutor notifyExecutor;
 
     public StepExecutorRouter(ChatClient.Builder chatClientBuilder,
                               @Value("classpath:prompts/step-think.st") Resource thinkPrompt,
                               @Value("classpath:prompts/step-research.st") Resource researchPrompt,
                               @Value("classpath:prompts/step-write.st") Resource writePrompt,
+                              @Value("classpath:prompts/step-notify.st") Resource notifyPrompt,
                               @Value("${echoflow.github.api-base-url:https://api.github.com}") String githubBaseUrl,
                               @Value("${echoflow.github.token:}") String githubToken,
                               @Value("${echoflow.github.connect-timeout:5s}") Duration githubConnectTimeout,
                               @Value("${echoflow.github.read-timeout:10s}") Duration githubReadTimeout,
-                              @Value("${echoflow.github.max-results:5}") int githubMaxResults) {
+                              @Value("${echoflow.github.max-results:5}") int githubMaxResults,
+                              @Value("${echoflow.webhook.url:}") String webhookUrl,
+                              @Value("${echoflow.webhook.connect-timeout:5s}") Duration webhookConnectTimeout,
+                              @Value("${echoflow.webhook.read-timeout:10s}") Duration webhookReadTimeout) {
         var chatClient = chatClientBuilder.build();
         var gitHubSearchTool = new GitHubSearchTool(
                 githubBaseUrl, githubToken,
                 githubConnectTimeout, githubReadTimeout,
                 githubMaxResults);
+        var webhookNotifyTool = new WebhookNotifyTool(
+                webhookUrl, webhookConnectTimeout, webhookReadTimeout);
 
         this.thinkExecutor = new LlmThinkExecutor(chatClient, thinkPrompt);
         this.researchExecutor = new LlmResearchExecutor(chatClient, researchPrompt, gitHubSearchTool);
         this.writeExecutor = new LlmWriteExecutor(chatClient, writePrompt);
-        this.notifyExecutor = new LogNotifyExecutor();
+        this.notifyExecutor = new LlmNotifyExecutor(chatClient, notifyPrompt, webhookNotifyTool);
     }
 
     @Override

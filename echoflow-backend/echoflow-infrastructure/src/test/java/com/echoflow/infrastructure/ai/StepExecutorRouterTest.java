@@ -41,11 +41,13 @@ class StepExecutorRouterTest {
         Resource thinkPrompt = new ByteArrayResource("think {taskDescription} {stepName}".getBytes());
         Resource researchPrompt = new ByteArrayResource("research {taskDescription} {stepName} {previousContext}".getBytes());
         Resource writePrompt = new ByteArrayResource("write {taskDescription} {stepName} {previousContext}".getBytes());
+        Resource notifyPrompt = new ByteArrayResource("notify {taskDescription} {stepName} {previousContext}".getBytes());
 
         router = new StepExecutorRouter(
-                chatClientBuilder, thinkPrompt, researchPrompt, writePrompt,
+                chatClientBuilder, thinkPrompt, researchPrompt, writePrompt, notifyPrompt,
                 "https://api.github.com", "",
-                Duration.ofSeconds(5), Duration.ofSeconds(10), 5);
+                Duration.ofSeconds(5), Duration.ofSeconds(10), 5,
+                "", Duration.ofSeconds(5), Duration.ofSeconds(10));
     }
 
     @Test
@@ -94,12 +96,26 @@ class StepExecutorRouterTest {
     }
 
     @Test
-    void routes_notify_step_without_llm() {
-        var context = new StepExecutionContext("task desc", "发送通知", StepType.NOTIFY, List.of());
+    void routes_notify_step_to_llm() {
+        when(requestSpec.call()).thenReturn(callSpec);
+        when(callSpec.content()).thenReturn("Notification sent successfully");
+
+        var context = new StepExecutionContext("task desc", "发送通知", StepType.NOTIFY, List.of("report output"));
         var result = router.execute(context);
 
-        assertThat(result.output()).isEqualTo("Notification recorded: 发送通知");
-        verify(chatClient, never()).prompt();
+        assertThat(result.output()).isEqualTo("Notification sent successfully");
+        verify(chatClient, atLeastOnce()).prompt();
+    }
+
+    @Test
+    void notify_step_registers_tools() {
+        when(requestSpec.call()).thenReturn(callSpec);
+        when(callSpec.content()).thenReturn("Notification with tools");
+
+        var context = new StepExecutionContext("task desc", "发送通知", StepType.NOTIFY, List.of());
+        router.execute(context);
+
+        verify(requestSpec).tools(any(WebhookNotifyTool.class));
     }
 
     @Test

@@ -44,6 +44,10 @@ echoflow:
     connect-timeout: 5s
     read-timeout: 10s
     max-results: 5
+  webhook:
+    url: ${WEBHOOK_URL:}
+    connect-timeout: 5s
+    read-timeout: 10s
 
 management:
   endpoints:
