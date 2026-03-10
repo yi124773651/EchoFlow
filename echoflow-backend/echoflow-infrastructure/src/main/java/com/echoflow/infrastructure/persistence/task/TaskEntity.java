@@ -23,6 +23,9 @@ public class TaskEntity {
     @Column(name = "completed_at")
     private Instant completedAt;
 
+    @Version
+    private Long version;
+
     protected TaskEntity() {}
 
     public TaskEntity(UUID id, String description, String status, Instant createdAt, Instant completedAt) {

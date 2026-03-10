@@ -2,6 +2,7 @@ package com.echoflow.web;
 
 import com.echoflow.domain.DomainException;
 import com.echoflow.domain.EntityNotFoundException;
+import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -34,6 +35,15 @@ public class GlobalExceptionHandler {
         ProblemDetail problem = ProblemDetail.forStatusAndDetail(
                 HttpStatus.BAD_REQUEST, ex.getMessage());
         problem.setTitle("Bad Request");
+        return problem;
+    }
+
+    @ExceptionHandler(OptimisticLockingFailureException.class)
+    ProblemDetail handleConflict(OptimisticLockingFailureException ex) {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(
+                HttpStatus.CONFLICT,
+                "The resource was modified by another request. Please retry.");
+        problem.setTitle("Conflict");
         return problem;
     }
 }

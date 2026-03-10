@@ -25,6 +25,9 @@ public class ExecutionEntity {
     @Column(name = "completed_at")
     private Instant completedAt;
 
+    @Version
+    private Long version;
+
     @OneToMany(fetch = FetchType.EAGER, cascade = CascadeType.ALL, orphanRemoval = true)
     @JoinColumn(name = "execution_id")
     @OrderBy("stepOrder ASC")
