@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useRef } from "react";
 import { useExecutionStream, type StepState } from "@/hooks/use-execution-stream";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -76,8 +77,17 @@ function StepCard({ step }: { step: StepState }) {
   );
 }
 
-export function ExecutionTimeline({ taskId }: { taskId: string }) {
+export function ExecutionTimeline({ taskId, onDone }: { taskId: string; onDone?: () => void }) {
   const execution = useExecutionStream(taskId);
+  const prevStatusRef = useRef(execution.status);
+
+  useEffect(() => {
+    const prev = prevStatusRef.current;
+    prevStatusRef.current = execution.status;
+    if (prev !== execution.status && (execution.status === "COMPLETED" || execution.status === "FAILED")) {
+      onDone?.();
+    }
+  }, [execution.status, onDone]);
 
   if (execution.status === "IDLE") {
     return (

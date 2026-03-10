@@ -42,8 +42,13 @@ export function TaskBoard() {
 
   function handleTaskCreated(taskId: string) {
     setSelectedTaskId(taskId);
-    // Reload task list after a short delay to allow backend to process
-    setTimeout(loadTasks, 500);
+    // Immediately add the new task to the list optimistically, then reload
+    loadTasks();
+  }
+
+  function handleExecutionDone() {
+    // Refresh task list when execution completes to update status badges
+    loadTasks();
   }
 
   return (
@@ -99,7 +104,7 @@ export function TaskBoard() {
       <div>
         <h2 className="text-lg font-semibold mb-3">执行详情</h2>
         {selectedTaskId ? (
-          <ExecutionTimeline taskId={selectedTaskId} />
+          <ExecutionTimeline taskId={selectedTaskId} onDone={handleExecutionDone} />
         ) : (
           <p className="text-sm text-muted-foreground">
             选择一个任务查看执行详情

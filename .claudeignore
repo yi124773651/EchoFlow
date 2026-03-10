@@ -1,0 +1,39 @@
+# Build outputs
+**/target/
+echoflow-frontend/.next/
+echoflow-frontend/out/
+echoflow-frontend/build/
+
+# Dependencies
+echoflow-frontend/node_modules/
+echoflow-frontend/node/
+
+# Maven wrapper jar (keep .properties)
+.mvn/wrapper/maven-wrapper.jar
+
+# IDE
+.idea/
+.vscode/
+*.iml
+*.iws
+*.ipr
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment / secrets
+.env
+*.env.local
+
+# Logs & debug
+*.log
+npm-debug.log*
+yarn-debug.log*
+*.dumpstream
+
+# Lock files
+echoflow-frontend/package-lock.json
+
+# TypeScript build info
+*.tsbuildinfo

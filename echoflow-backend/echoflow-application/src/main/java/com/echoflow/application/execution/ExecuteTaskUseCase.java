@@ -5,7 +5,7 @@ import com.echoflow.domain.execution.*;
 import com.echoflow.domain.task.TaskId;
 import com.echoflow.domain.task.TaskRepository;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionOperations;
 
 import java.time.Clock;
 import java.time.Instant;
@@ -17,6 +17,9 @@ import java.util.List;
  *
  * <p>Steps are planned by an LLM via {@link TaskPlannerPort}, then each step
  * is executed by the {@link StepExecutorPort} (which may call LLM, tools, etc.).</p>
+ *
+ * <p>Transaction boundaries are managed programmatically via {@link TransactionOperations}
+ * to ensure LLM/remote calls never execute inside a database transaction (Rule 4).</p>
  */
 @Service
 public class ExecuteTaskUseCase {
@@ -27,19 +30,22 @@ public class ExecuteTaskUseCase {
     private final TaskPlannerPort taskPlanner;
     private final StepExecutorPort stepExecutor;
     private final Clock clock;
+    private final TransactionOperations tx;
 
     public ExecuteTaskUseCase(TaskRepository taskRepository,
                               ExecutionRepository executionRepository,
                               ExecutionEventPublisher eventPublisher,
                               TaskPlannerPort taskPlanner,
                               StepExecutorPort stepExecutor,
-                              Clock clock) {
+                              Clock clock,
+                              TransactionOperations tx) {
         this.taskRepository = taskRepository;
         this.executionRepository = executionRepository;
         this.eventPublisher = eventPublisher;
         this.taskPlanner = taskPlanner;
         this.stepExecutor = stepExecutor;
         this.clock = clock;
+        this.tx = tx;
     }
 
     /**
@@ -51,32 +57,39 @@ public class ExecuteTaskUseCase {
         runExecution(execution);
     }
 
-    @Transactional
-    protected Execution planExecution(TaskId taskId) {
+    /**
+     * Phase 1: Load task, call LLM for step planning, then persist atomically.
+     * LLM call is explicitly outside any database transaction.
+     */
+    Execution planExecution(TaskId taskId) {
+        // Read task (implicit per-call tx via repository)
         var task = taskRepository.findById(taskId)
                 .orElseThrow(() -> new EntityNotFoundException("Task", taskId));
 
-        // Call LLM to decompose the task (outside transaction is ideal,
-        // but for simplicity we do it here; the call is fast and idempotent)
+        // LLM call — NO transaction
         var plannedSteps = taskPlanner.planSteps(task.description());
 
         if (plannedSteps.isEmpty()) {
             throw new TaskPlanningException("LLM returned zero steps for task: " + taskId);
         }
 
-        task.markExecuting();
-        taskRepository.save(task);
-
+        // Prepare domain objects in memory
         var now = clock.instant();
-        var execution = Execution.create(ExecutionId.generate(), taskId, now);
+        task.markExecuting();
 
+        var execution = Execution.create(ExecutionId.generate(), taskId, now);
         for (var step : plannedSteps) {
             execution.addStep(StepId.generate(), step.name(), step.type(), now);
         }
-
         execution.startRunning();
-        executionRepository.save(execution);
 
+        // Atomic write — short transaction
+        tx.executeWithoutResult(status -> {
+            taskRepository.save(task);
+            executionRepository.save(execution);
+        });
+
+        // Publish event AFTER transaction commits
         eventPublisher.publish(new ExecutionEvent.ExecutionStarted(
                 execution.id(), taskId,
                 execution.steps().stream().map(s ->
@@ -89,6 +102,10 @@ public class ExecuteTaskUseCase {
         return execution;
     }
 
+    /**
+     * Phase 2: Execute each step sequentially. LLM calls happen outside
+     * transactions; only DB saves use short implicit transactions.
+     */
     private void runExecution(Execution execution) {
         var task = taskRepository.findById(execution.taskId())
                 .orElseThrow(() -> new EntityNotFoundException("Task", execution.taskId()));
@@ -141,54 +158,53 @@ public class ExecuteTaskUseCase {
                 execution.id(), stepId, type, content, now));
     }
 
-    @Transactional
-    protected void completeStep(Execution execution, StepId stepId, String output) {
+    private void completeStep(Execution execution, StepId stepId, String output) {
         execution.completeStep(stepId, output);
         executionRepository.save(execution);
         eventPublisher.publish(new ExecutionEvent.StepCompleted(
                 execution.id(), stepId, output, clock.instant()));
     }
 
-    @Transactional
-    protected void failStep(Execution execution, StepId stepId, String reason) {
+    private void failStep(Execution execution, StepId stepId, String reason) {
         execution.failStep(stepId, reason);
         executionRepository.save(execution);
         eventPublisher.publish(new ExecutionEvent.StepFailed(
                 execution.id(), stepId, reason, clock.instant()));
     }
 
-    @Transactional
-    protected void completeExecution(Execution execution) {
+    private void completeExecution(Execution execution) {
         var now = clock.instant();
         execution.markCompleted(now);
-        executionRepository.save(execution);
 
         var taskId = execution.taskId();
         var task = taskRepository.findById(taskId)
                 .orElseThrow(() -> new EntityNotFoundException("Task", taskId));
         task.markCompleted(now);
-        taskRepository.save(task);
+
+        tx.executeWithoutResult(status -> {
+            executionRepository.save(execution);
+            taskRepository.save(task);
+        });
 
         eventPublisher.publish(new ExecutionEvent.ExecutionCompleted(execution.id(), now));
     }
 
-    @Transactional
-    protected void failExecution(Execution execution, String reason) {
+    private void failExecution(Execution execution, String reason) {
         var now = clock.instant();
         execution.markFailed(now);
-        executionRepository.save(execution);
 
-        var taskId = execution.taskId();
-        taskRepository.findById(taskId).ifPresent(task -> {
-            task.markFailed(now);
-            taskRepository.save(task);
+        tx.executeWithoutResult(status -> {
+            executionRepository.save(execution);
+            taskRepository.findById(execution.taskId()).ifPresent(task -> {
+                task.markFailed(now);
+                taskRepository.save(task);
+            });
         });
 
         eventPublisher.publish(new ExecutionEvent.ExecutionFailed(execution.id(), reason, now));
     }
 
-    @Transactional
-    protected void saveExecution(Execution execution) {
+    private void saveExecution(Execution execution) {
         executionRepository.save(execution);
     }
 }
