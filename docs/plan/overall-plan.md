@@ -1,7 +1,7 @@
 # EchoFlow 整体计划
 
 > 创建时间: 2026-03-11 15:00 CST
-> 最后更新: 2026-03-11 22:30 CST
+> 最后更新: 2026-03-12 00:30 CST
 
 ---
 
@@ -215,21 +215,49 @@ Web 层 (application.yml)
 
 ## Phase 3: Agent Framework 全量迁移 ⏳
 
-> 状态: 待启动
+> 状态: 进行中
 > 先决条件: Phase 2 POC 通过 (Go 决策)
 > 目标: 用 Agent Framework 替代自研执行链路
 
-### 改动清单 (Phase 2 POC 通过后细化)
+### Phase 3.1: ReactAgent 全量迁移 ✅
+
+> 状态: 已完成 (2026-03-12)
+> 实施计划: `docs/plans/2026-03-11-phase3-1-reactagent-full-migration.md`
+> Devlog: `docs/devlog/015-reactagent-full-migration.md`
+
+将全部 4 种 StepType (THINK/RESEARCH/WRITE/NOTIFY) 统一迁移到 ReactAgent 驱动。
+
+**核心改动**:
+
+| 项 | 改动 |
+|----|------|
+| 新建 `ReactAgentStepExecutor` | 抽象基类，统一 retry/validate/truncate 逻辑 |
+| 重构 `ReactAgentThinkExecutor` | 继承基类，POC 代码简化为 33 行 |
+| 新建 `ReactAgentResearchExecutor` | GitHubSearchTool + ToolRetryInterceptor |
+| 新建 `ReactAgentWriteExecutor` | 纯文本生成，最简实现 |
+| 新建 `ReactAgentNotifyExecutor` | WebhookNotifyTool + ToolRetryInterceptor |
+| 重构 `StepExecutorRouter` | 统一路由：ReactAgent (primary) → LlmExecutor (fallback) |
+| Domain/Application | **零改动** — `StepExecutorPort` 接口不变 |
+
+**验收**:
+- [x] 64 个测试全部 GREEN（原 55 + 新增 9）
+- [x] DDD 边界检查通过（Domain/Application 零 AI 框架 import）
+- [x] 编译零 error
+
+### Phase 3.2: StateGraph 并行 + SSE 适配 (待启动)
 
 | 项 | 当前 | 目标 |
 |----|------|------|
-| 执行引擎 | `StepExecutorRouter` → `LlmXxxExecutor` | Agent Framework `ReactAgent` + Hook/Interceptor |
-| 任务规划 | `AiTaskPlanner` 自研 prompt | Agent Framework 内置或增强的规划能力 |
-| 上下文传递 | 手动拼接 `previousOutputs` | `RunnableConfig` + `ToolContext` 结构化状态 |
 | 并行能力 | 无 | StateGraph 并行节点 + 聚合策略 |
-| HITL | 无 | Graph 中断/恢复机制 |
-| Checkpoint | 无 | 自实现 `JpaSaver` 或 `RedisSaver` |
 | SSE 流式 | 现有 `SseExecutionEventPublisher` | 适配 `ReactAgent.stream()` → `StreamingOutput` |
+| 上下文传递 | 手动拼接 `previousOutputs` | `RunnableConfig` + `ToolContext` 结构化状态 |
+
+### Phase 3.3: 持久化 + 任务规划增强 (待启动)
+
+| 项 | 当前 | 目标 |
+|----|------|------|
+| Checkpoint | 无 | 自实现 `JpaSaver` 替代 `MemorySaver` |
+| 任务规划 | `AiTaskPlanner` 自研 prompt | Agent Framework 内置或增强的规划能力 |
 | 前端 | `execution-timeline` 组件 | 适配新事件结构 (并行节点、HITL 状态等) |
 
 ### Backlog (从 Phase 2 延后的项目)
@@ -257,8 +285,8 @@ Web 层 (application.yml)
 |----|------|------|--------|----------|-----------|
 | R1 | Spring AI 1.0→1.1 API break | 编译失败，需修改调用代码 | ~~高~~ → **已消除** | ChatClient/@Tool/@ToolParam 无 breaking changes，零代码改动 | Phase 0 ✅ |
 | R2 | Spring Boot 3.4→3.5 不兼容 | JPA/Flyway/Test 行为变化 | ~~中~~ → **已消除** | 3.5.8 升级零代码改动，70 测试全 GREEN | Phase 0 ✅ |
-| R3 | Agent Framework 依赖冲突 | fastjson/httpclient4 类加载冲突 | 中 | POC 验证，必要时 exclusion 或 shade | Phase 2 |
-| R4 | Agent Framework 成熟度不足 | API 不稳定，生产级功能缺失 | 中 | POC Go/No-Go 门控，封装为 Port 降低耦合 | Phase 2-3 |
+| R3 | Agent Framework 依赖冲突 | fastjson/httpclient4 类加载冲突 | ~~中~~ → **已消除** | POC+全量迁移验证无冲突，64 测试全 GREEN | Phase 2 ✅ |
+| R4 | Agent Framework 成熟度不足 | API 不稳定，生产级功能缺失 | 低 | 方案 A 封装为 Port 降低耦合，Builder API 已修正 (methodTools/Builder 类型) | Phase 2-3 |
 | R5 | 多模型配置膨胀 | 运维复杂度上升 | 低 | 提供合理默认值，仅必要时覆盖 | Phase 1 |
 | R6 | SSE 降级期用户体验下降 | 前端无实时反馈 | 中 | Phase 3 补全前提供 loading 状态或 polling fallback | Phase 3 |
 | R7 | RedisSaver 不存在 | Checkpoint 持久化需自行实现 | 中 | 优先用 MemorySaver 验证，生产环境自实现 JpaSaver | Phase 3 |
@@ -279,7 +307,10 @@ Web 层 (application.yml)
 | Devlog 011 (Phase 0) | `docs/devlog/011-version-upgrade.md` |
 | Devlog 012 (Phase 1) | `docs/devlog/012-multi-model-routing.md` |
 | Devlog 013 (Phase 2 调研) | `docs/devlog/013-agent-framework-research.md` |
+| Devlog 014 (Phase 2 POC) | `docs/devlog/014-agent-framework-poc.md` |
+| Devlog 015 (Phase 3.1) | `docs/devlog/015-reactagent-full-migration.md` |
 | Plans (MVP) | `docs/plans/mvp-archived/` |
 | Plan (Phase 0) | `docs/plans/2026-03-11-1530-phase0-version-upgrade.md` |
 | Plan (Phase 1) | `docs/plans/2026-03-11-1700-phase1-multi-model-routing.md` |
 | Plan (Phase 2 POC) | `docs/plans/2026-03-11-agent-framework-poc.md` |
+| Plan (Phase 3.1) | `docs/plans/2026-03-11-phase3-1-reactagent-full-migration.md` |
