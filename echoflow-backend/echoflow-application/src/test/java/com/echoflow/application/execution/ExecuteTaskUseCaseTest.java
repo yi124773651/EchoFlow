@@ -1,5 +1,6 @@
 package com.echoflow.application.execution;
 
+import com.echoflow.application.execution.GraphOrchestrationPort.StepProgressListener;
 import com.echoflow.domain.execution.Execution;
 import com.echoflow.domain.execution.ExecutionRepository;
 import com.echoflow.domain.execution.ExecutionStatus;
@@ -11,7 +12,6 @@ import com.echoflow.domain.task.TaskStatus;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.transaction.support.TransactionOperations;
@@ -25,7 +25,7 @@ import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -36,7 +36,7 @@ class ExecuteTaskUseCaseTest {
     @Mock private TaskRepository taskRepository;
     @Mock private ExecutionRepository executionRepository;
     @Mock private TaskPlannerPort taskPlanner;
-    @Mock private StepExecutorPort stepExecutor;
+    @Mock private GraphOrchestrationPort graphOrchestrator;
 
     private final List<ExecutionEvent> publishedEvents = new ArrayList<>();
     private ExecuteTaskUseCase useCase;
@@ -48,7 +48,7 @@ class ExecuteTaskUseCaseTest {
         ExecutionEventPublisher publisher = publishedEvents::add;
         useCase = new ExecuteTaskUseCase(
                 taskRepository, executionRepository, publisher,
-                taskPlanner, stepExecutor, clock,
+                taskPlanner, graphOrchestrator, clock,
                 TransactionOperations.withoutTransaction());
     }
 
@@ -92,7 +92,7 @@ class ExecuteTaskUseCaseTest {
     }
 
     @Test
-    void execute_delegates_each_step_to_step_executor() {
+    void execute_delegates_to_graph_orchestrator() {
         var taskId = TaskId.generate();
         var task = Task.submit(taskId, "调研 Java Agent", NOW);
         when(taskRepository.findById(taskId)).thenReturn(Optional.of(task));
@@ -100,38 +100,20 @@ class ExecuteTaskUseCaseTest {
                 new TaskPlannerPort.PlannedStep("分析需求", StepType.THINK),
                 new TaskPlannerPort.PlannedStep("搜索资料", StepType.RESEARCH)
         ));
-        when(stepExecutor.execute(any())).thenReturn(new StepOutput("执行结果"));
+
+        // Simulate graph execution: each step completes
+        doAnswer(invocation -> {
+            StepProgressListener listener = invocation.getArgument(2);
+            listener.onStepStarting("分析需求", StepType.THINK);
+            listener.onStepCompleted("分析需求", "执行结果");
+            listener.onStepStarting("搜索资料", StepType.RESEARCH);
+            listener.onStepCompleted("搜索资料", "执行结果");
+            return null;
+        }).when(graphOrchestrator).executeSteps(eq("调研 Java Agent"), any(), any());
 
         useCase.execute(taskId);
 
-        verify(stepExecutor, times(2)).execute(any(StepExecutionContext.class));
-    }
-
-    @Test
-    void execute_passes_previous_outputs_to_subsequent_steps() {
-        var taskId = TaskId.generate();
-        var task = Task.submit(taskId, "写报告", NOW);
-        when(taskRepository.findById(taskId)).thenReturn(Optional.of(task));
-        when(taskPlanner.planSteps("写报告")).thenReturn(List.of(
-                new TaskPlannerPort.PlannedStep("分析", StepType.THINK),
-                new TaskPlannerPort.PlannedStep("撰写", StepType.WRITE)
-        ));
-
-        when(stepExecutor.execute(argThat(ctx ->
-                ctx != null && ctx.stepType() == StepType.THINK)))
-                .thenReturn(new StepOutput("分析结果"));
-        when(stepExecutor.execute(argThat(ctx ->
-                ctx != null && ctx.stepType() == StepType.WRITE)))
-                .thenReturn(new StepOutput("# 报告\n\n详细内容"));
-
-        useCase.execute(taskId);
-
-        var captor = ArgumentCaptor.forClass(StepExecutionContext.class);
-        verify(stepExecutor, times(2)).execute(captor.capture());
-        var contexts = captor.getAllValues();
-
-        assertThat(contexts.get(0).previousOutputs()).isEmpty();
-        assertThat(contexts.get(1).previousOutputs()).containsExactly("分析结果");
+        verify(graphOrchestrator).executeSteps(eq("调研 Java Agent"), any(), any());
     }
 
     @Test
@@ -143,7 +125,15 @@ class ExecuteTaskUseCaseTest {
                 new TaskPlannerPort.PlannedStep("思考", StepType.THINK),
                 new TaskPlannerPort.PlannedStep("调研", StepType.RESEARCH)
         ));
-        when(stepExecutor.execute(any())).thenReturn(new StepOutput("执行结果"));
+
+        doAnswer(invocation -> {
+            StepProgressListener listener = invocation.getArgument(2);
+            listener.onStepStarting("思考", StepType.THINK);
+            listener.onStepCompleted("思考", "执行结果");
+            listener.onStepStarting("调研", StepType.RESEARCH);
+            listener.onStepCompleted("调研", "执行结果");
+            return null;
+        }).when(graphOrchestrator).executeSteps(any(), any(), any());
 
         useCase.execute(taskId);
 
@@ -162,15 +152,20 @@ class ExecuteTaskUseCaseTest {
     }
 
     @Test
-    void execute_fails_on_unexpected_exception() {
+    void execute_fails_when_graph_throws_exception() {
         var taskId = TaskId.generate();
         var task = Task.submit(taskId, "fail task", NOW);
         when(taskRepository.findById(taskId)).thenReturn(Optional.of(task));
         when(taskPlanner.planSteps("fail task")).thenReturn(List.of(
                 new TaskPlannerPort.PlannedStep("分析", StepType.THINK)
         ));
-        when(stepExecutor.execute(any()))
-                .thenThrow(new RuntimeException("unexpected NPE"));
+
+        doAnswer(invocation -> {
+            StepProgressListener listener = invocation.getArgument(2);
+            listener.onStepStarting("分析", StepType.THINK);
+            listener.onStepFailed("分析", "unexpected NPE");
+            throw new RuntimeException("unexpected NPE");
+        }).when(graphOrchestrator).executeSteps(any(), any(), any());
 
         useCase.execute(taskId);
 
@@ -181,7 +176,7 @@ class ExecuteTaskUseCaseTest {
     }
 
     @Test
-    void execute_degrades_when_step_execution_fails() {
+    void execute_degrades_when_step_is_skipped() {
         var taskId = TaskId.generate();
         var task = Task.submit(taskId, "degraded task", NOW);
         when(taskRepository.findById(taskId)).thenReturn(Optional.of(task));
@@ -191,15 +186,16 @@ class ExecuteTaskUseCaseTest {
                 new TaskPlannerPort.PlannedStep("撰写", StepType.WRITE)
         ));
 
-        when(stepExecutor.execute(argThat(ctx ->
-                ctx != null && ctx.stepType() == StepType.THINK)))
-                .thenReturn(new StepOutput("分析结果"));
-        when(stepExecutor.execute(argThat(ctx ->
-                ctx != null && ctx.stepType() == StepType.RESEARCH)))
-                .thenThrow(new StepExecutionException("LLM timeout"));
-        when(stepExecutor.execute(argThat(ctx ->
-                ctx != null && ctx.stepType() == StepType.WRITE)))
-                .thenReturn(new StepOutput("报告内容"));
+        doAnswer(invocation -> {
+            StepProgressListener listener = invocation.getArgument(2);
+            listener.onStepStarting("分析", StepType.THINK);
+            listener.onStepCompleted("分析", "分析结果");
+            listener.onStepStarting("调研", StepType.RESEARCH);
+            listener.onStepSkipped("调研", "LLM timeout");
+            listener.onStepStarting("撰写", StepType.WRITE);
+            listener.onStepCompleted("撰写", "报告内容");
+            return null;
+        }).when(graphOrchestrator).executeSteps(any(), any(), any());
 
         useCase.execute(taskId);
 
@@ -213,45 +209,40 @@ class ExecuteTaskUseCaseTest {
         assertThat(eventTypes.getLast()).isEqualTo("ExecutionCompleted");
         assertThat(eventTypes.stream().filter(t -> t.equals("StepCompleted")).count()).isEqualTo(2);
         assertThat(eventTypes.stream().filter(t -> t.equals("StepSkipped")).count()).isEqualTo(1);
-
-        // All 3 steps were attempted
-        verify(stepExecutor, times(3)).execute(any(StepExecutionContext.class));
     }
 
     @Test
-    void execute_skipped_step_output_not_in_previous_outputs() {
+    void execute_publishes_step_started_and_log_events() {
         var taskId = TaskId.generate();
-        var task = Task.submit(taskId, "skip output test", NOW);
+        var task = Task.submit(taskId, "event test", NOW);
         when(taskRepository.findById(taskId)).thenReturn(Optional.of(task));
-        when(taskPlanner.planSteps("skip output test")).thenReturn(List.of(
-                new TaskPlannerPort.PlannedStep("分析", StepType.THINK),
-                new TaskPlannerPort.PlannedStep("调研", StepType.RESEARCH),
-                new TaskPlannerPort.PlannedStep("撰写", StepType.WRITE)
+        when(taskPlanner.planSteps("event test")).thenReturn(List.of(
+                new TaskPlannerPort.PlannedStep("分析", StepType.THINK)
         ));
 
-        when(stepExecutor.execute(argThat(ctx ->
-                ctx != null && ctx.stepType() == StepType.THINK)))
-                .thenReturn(new StepOutput("分析结果"));
-        when(stepExecutor.execute(argThat(ctx ->
-                ctx != null && ctx.stepType() == StepType.RESEARCH)))
-                .thenThrow(new StepExecutionException("LLM timeout"));
-        when(stepExecutor.execute(argThat(ctx ->
-                ctx != null && ctx.stepType() == StepType.WRITE)))
-                .thenReturn(new StepOutput("报告"));
+        doAnswer(invocation -> {
+            StepProgressListener listener = invocation.getArgument(2);
+            listener.onStepStarting("分析", StepType.THINK);
+            listener.onStepCompleted("分析", "分析结果");
+            return null;
+        }).when(graphOrchestrator).executeSteps(any(), any(), any());
 
         useCase.execute(taskId);
 
-        // Verify WRITE step only received THINK output, not the skipped RESEARCH output
-        var captor = ArgumentCaptor.forClass(StepExecutionContext.class);
-        verify(stepExecutor, times(3)).execute(captor.capture());
-        var contexts = captor.getAllValues();
+        var eventTypes = publishedEvents.stream()
+                .map(e -> e.getClass().getSimpleName())
+                .toList();
 
-        // THINK: no previous
-        assertThat(contexts.get(0).previousOutputs()).isEmpty();
-        // RESEARCH: has THINK output (then throws)
-        assertThat(contexts.get(1).previousOutputs()).containsExactly("分析结果");
-        // WRITE: only THINK output (RESEARCH was skipped)
-        assertThat(contexts.get(2).previousOutputs()).containsExactly("分析结果");
+        // Expected: ExecutionStarted → StepStarted → StepLogAppended(ACTION) →
+        //           StepLogAppended(OBSERVATION) → StepCompleted → ExecutionCompleted
+        assertThat(eventTypes).containsExactly(
+                "ExecutionStarted",
+                "StepStarted",
+                "StepLogAppended",   // ACTION
+                "StepLogAppended",   // OBSERVATION
+                "StepCompleted",
+                "ExecutionCompleted"
+        );
     }
 
     @Test

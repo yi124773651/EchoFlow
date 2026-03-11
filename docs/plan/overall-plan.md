@@ -1,7 +1,7 @@
 # EchoFlow 整体计划
 
 > 创建时间: 2026-03-11 15:00 CST
-> 最后更新: 2026-03-11 18:00 CST
+> 最后更新: 2026-03-12 00:30 CST
 
 ---
 
@@ -150,11 +150,33 @@ Web 层 (application.yml)
 
 ---
 
-## Phase 2: Agent Framework POC ⏳
+## Phase 2: Agent Framework POC ✅
 
-> 状态: 待启动
+> 状态: **已完成** — Go 决策，推荐方案 A
 > 先决条件: Phase 0 完成 (可与 Phase 1 并行)
 > 目标: 验证 Agent Framework 能力边界，产出 Go/No-Go 决策
+> 实施计划: `docs/plans/2026-03-11-agent-framework-poc.md`
+> POC 报告: `docs/research/agent-framework-poc-report.md`
+> Devlog (调研): `docs/devlog/013-agent-framework-research.md`
+> Devlog (POC): `docs/devlog/014-agent-framework-poc.md`
+
+### 调研成果 (2026-03-11)
+
+已完成 Spring AI Alibaba Agent Framework 源码级 API 验证，核心发现：
+
+| 能力 | API | 验证状态 |
+|------|-----|---------|
+| ReAct Agent 构建 | `ReactAgent.builder()` — 15+ 配置项 | ✅ 源码确认 |
+| Hook 生命周期 | `AgentHook` / `MessagesModelHook` / `ModelCallLimitHook` | ✅ 源码确认 |
+| 拦截器链 | `ModelInterceptor` / `ToolInterceptor` | ✅ 源码确认 |
+| 状态管理 | `OverAllState` / `RunnableConfig` / `MemorySaver` | ✅ 源码确认 |
+| 工作流引擎 | `StateGraph` / `CompiledGraph` | ✅ 源码确认 |
+| Agent 作为工具 | `AgentTool.getFunctionToolCallback()` | ✅ 源码确认 |
+| 子 Agent 委托 | `SubAgentSpec` / `SubAgentInterceptor` | ✅ 源码确认 |
+| 流式输出 | `StreamingOutput` / `NodeOutput` | ✅ 源码确认 |
+| Redis 持久化 | `RedisSaver` | ❌ 不存在，需自行实现 |
+
+详见: `docs/research/spring-ai-alibaba-agent-framework-guide.md`, `docs/research/spring-ai-alibaba-practical-examples.md`
 
 ### POC 范围
 
@@ -162,45 +184,88 @@ Web 层 (application.yml)
 
 | 验证项 | 具体内容 | 成功标准 |
 |--------|----------|----------|
+| **ReactAgent 基础集成** | 将 THINK Executor 改为 ReactAgent 驱动 | 输出与现有 ChatClient 方式一致，测试通过 |
+| **Hook/Interceptor 可用性** | 添加 MessageTrimmingHook + ToolRetryInterceptor | Hook 可独立启用/禁用，拦截器链按序执行 |
 | **并行执行+聚合** | 多个 RESEARCH step 并行调用，结果聚合后传给 WRITE | 3 个并行 RESEARCH 全部完成后 WRITE 能获取所有结果 |
-| **Human-in-the-loop** | WRITE step 执行前暂停，等待用户确认 | API 可触发暂停和恢复，状态持久化 |
-| **Checkpoint 断点恢复** | Execution 中途失败，可从最后成功的 step 恢复 | 恢复后不重复已完成的步骤 |
 | **DDD 兼容性** | Agent Framework 类型全部封装在 Infrastructure 层 | Domain/Application 无任何 Agent Framework import |
-| **依赖冲突** | fastjson/agentscope/httpclient4 与现有依赖共存 | 编译通过，无运行时类加载冲突 |
+| **依赖冲突** | agent-framework JAR 与现有依赖共存 | 编译通过，无运行时类加载冲突 |
 | **SSE 集成** | Agent 执行过程中可发出与现有格式兼容的 SSE 事件 | 前端 useExecutionStream 能消费事件 |
+
+**暂不验证** (放入 Phase 3 Backlog):
+- Human-in-the-loop (Graph 中断/恢复)
+- Checkpoint 断点恢复 (需自实现持久化 Saver)
+- StateGraph 复杂工作流
 
 ### POC 产出物
 
 - `docs/research/agent-framework-poc-report.md` — Go/No-Go 决策 + 理由
-- 如 Go: 领域模型调整方案（方案 A 或方案 B）的推荐
+- 如 Go: 领域模型调整方案推荐 (方案 A 或 方案 B)
+- 如 No-Go: 替代方案建议
 
 ### 领域模型待决方案
 
 | 方案 | 描述 | 适用条件 |
 |------|------|----------|
-| **A: 领域模型为主** | Task → Execution → ExecutionStep 保留，Agent Framework 仅作为 Infrastructure 执行引擎 | Agent Framework 能良好封装在 Adapter 中 |
-| **B: Agent State 为主** | Agent Framework 的 Graph State 成为执行的真实模型，Execution 聚合根简化为归档记录 | Agent Framework 的 State 机制足够成熟且可持久化 |
+| **A: 领域模型为主** | Task → Execution → ExecutionStep 保留，Agent Framework 仅作为 Infrastructure 执行引擎。ReactAgent 在 Adapter 内部使用，`StepExecutorPort` 接口不变。 | Agent Framework 能良好封装在 Adapter 中，不需要 Graph State 跨 Step 共享 |
+| **B: Agent State 为主** | Agent Framework 的 Graph State 成为执行的真实模型，Execution 聚合根简化为归档记录。`StepExecutorPort` 改为 `AgentExecutionPort`。 | Agent Framework 的 State 机制足够成熟，Graph 编排覆盖所有业务场景 |
+
+**决策时机**: POC 完成后，根据实际验证结果选择。倾向方案 A（风险更低、DDD 边界更清晰）。
 
 ---
 
 ## Phase 3: Agent Framework 全量迁移 ⏳
 
-> 状态: 待启动
+> 状态: 进行中
 > 先决条件: Phase 2 POC 通过 (Go 决策)
 > 目标: 用 Agent Framework 替代自研执行链路
 
-### 改动清单 (Phase 2 POC 通过后细化)
+### Phase 3.1: ReactAgent 全量迁移 ✅
+
+> 状态: 已完成 (2026-03-12)
+> 实施计划: `docs/plans/2026-03-11-phase3-1-reactagent-full-migration.md`
+> Devlog: `docs/devlog/015-reactagent-full-migration.md`
+
+将全部 4 种 StepType (THINK/RESEARCH/WRITE/NOTIFY) 统一迁移到 ReactAgent 驱动。
+
+**核心改动**:
+
+| 项 | 改动 |
+|----|------|
+| 新建 `ReactAgentStepExecutor` | 抽象基类，统一 retry/validate/truncate 逻辑 |
+| 重构 `ReactAgentThinkExecutor` | 继承基类，POC 代码简化为 33 行 |
+| 新建 `ReactAgentResearchExecutor` | GitHubSearchTool + ToolRetryInterceptor |
+| 新建 `ReactAgentWriteExecutor` | 纯文本生成，最简实现 |
+| 新建 `ReactAgentNotifyExecutor` | WebhookNotifyTool + ToolRetryInterceptor |
+| 重构 `StepExecutorRouter` | 统一路由：ReactAgent (primary) → LlmExecutor (fallback) |
+| Domain/Application | **零改动** — `StepExecutorPort` 接口不变 |
+
+**验收**:
+- [x] 64 个测试全部 GREEN（原 55 + 新增 9）
+- [x] DDD 边界检查通过（Domain/Application 零 AI 框架 import）
+- [x] 编译零 error
+
+### Phase 3.2: StateGraph 并行 + SSE 适配 (待启动)
 
 | 项 | 当前 | 目标 |
 |----|------|------|
-| 执行引擎 | `StepExecutorRouter` → `LlmXxxExecutor` | Agent Framework `ReactAgent` / `SequentialAgent` / Graph |
+| 并行能力 | 无 | StateGraph 并行节点 + 聚合策略 |
+| SSE 流式 | 现有 `SseExecutionEventPublisher` | 适配 `ReactAgent.stream()` → `StreamingOutput` |
+| 上下文传递 | 手动拼接 `previousOutputs` | `RunnableConfig` + `ToolContext` 结构化状态 |
+
+### Phase 3.3: 持久化 + 任务规划增强 (待启动)
+
+| 项 | 当前 | 目标 |
+|----|------|------|
+| Checkpoint | 无 | 自实现 `JpaSaver` 替代 `MemorySaver` |
 | 任务规划 | `AiTaskPlanner` 自研 prompt | Agent Framework 内置或增强的规划能力 |
-| 上下文传递 | 手动拼接 `previousOutputs` | Agent Framework `OverAllState` 结构化状态 |
-| 并行能力 | 无 | Graph 并行节点 + 聚合策略 |
-| HITL | 无 | Graph 中断/恢复机制 |
-| Checkpoint | 无 | Redis/MongoDB 持久化 checkpoint |
-| SSE 流式 | 现有 `SseExecutionEventPublisher` | 适配 Agent Framework 执行生命周期，补全 SSE |
 | 前端 | `execution-timeline` 组件 | 适配新事件结构 (并行节点、HITL 状态等) |
+
+### Backlog (从 Phase 2 延后的项目)
+
+- Human-in-the-loop: WRITE step 执行前暂停，等待用户确认
+- Checkpoint 断点恢复: Execution 中途失败，可从最后成功的 step 恢复
+- 自适应任务分解: 基于任务复杂度动态调整 step 数量
+- 自动 Agent 选择: 基于任务属性智能选择 Agent 类型
 
 ---
 
@@ -220,10 +285,11 @@ Web 层 (application.yml)
 |----|------|------|--------|----------|-----------|
 | R1 | Spring AI 1.0→1.1 API break | 编译失败，需修改调用代码 | ~~高~~ → **已消除** | ChatClient/@Tool/@ToolParam 无 breaking changes，零代码改动 | Phase 0 ✅ |
 | R2 | Spring Boot 3.4→3.5 不兼容 | JPA/Flyway/Test 行为变化 | ~~中~~ → **已消除** | 3.5.8 升级零代码改动，70 测试全 GREEN | Phase 0 ✅ |
-| R3 | Agent Framework 依赖冲突 | fastjson/httpclient4 类加载冲突 | 中 | POC 验证，必要时 exclusion 或 shade | Phase 2 |
-| R4 | Agent Framework 成熟度不足 | API 不稳定，生产级功能缺失 | 中 | POC Go/No-Go 门控，封装为 Port 降低耦合 | Phase 2-3 |
+| R3 | Agent Framework 依赖冲突 | fastjson/httpclient4 类加载冲突 | ~~中~~ → **已消除** | POC+全量迁移验证无冲突，64 测试全 GREEN | Phase 2 ✅ |
+| R4 | Agent Framework 成熟度不足 | API 不稳定，生产级功能缺失 | 低 | 方案 A 封装为 Port 降低耦合，Builder API 已修正 (methodTools/Builder 类型) | Phase 2-3 |
 | R5 | 多模型配置膨胀 | 运维复杂度上升 | 低 | 提供合理默认值，仅必要时覆盖 | Phase 1 |
 | R6 | SSE 降级期用户体验下降 | 前端无实时反馈 | 中 | Phase 3 补全前提供 loading 状态或 polling fallback | Phase 3 |
+| R7 | RedisSaver 不存在 | Checkpoint 持久化需自行实现 | 中 | 优先用 MemorySaver 验证，生产环境自实现 JpaSaver | Phase 3 |
 
 ---
 
@@ -233,11 +299,18 @@ Web 层 (application.yml)
 |------|------|
 | MVP 原始计划 (已归档) | `docs/plan/mvp-plan.archived.md` |
 | Spring AI Alibaba 调研 | `docs/research/spring-ai-alibaba.md` |
+| Agent Framework 使用指南 (已源码验证) | `docs/research/spring-ai-alibaba-agent-framework-guide.md` |
+| Agent Framework 实践案例 (已源码验证) | `docs/research/spring-ai-alibaba-practical-examples.md` |
 | 头脑风暴需求结论 | `docs/research/spring-ai-alibaba.md` §9 |
 | 架构指南 | `docs/claude/backend.md`, `docs/claude/agent.md` |
 | Devlog 001-010 (MVP) | `docs/devlog/mvp-archived/` |
 | Devlog 011 (Phase 0) | `docs/devlog/011-version-upgrade.md` |
 | Devlog 012 (Phase 1) | `docs/devlog/012-multi-model-routing.md` |
+| Devlog 013 (Phase 2 调研) | `docs/devlog/013-agent-framework-research.md` |
+| Devlog 014 (Phase 2 POC) | `docs/devlog/014-agent-framework-poc.md` |
+| Devlog 015 (Phase 3.1) | `docs/devlog/015-reactagent-full-migration.md` |
 | Plans (MVP) | `docs/plans/mvp-archived/` |
 | Plan (Phase 0) | `docs/plans/2026-03-11-1530-phase0-version-upgrade.md` |
 | Plan (Phase 1) | `docs/plans/2026-03-11-1700-phase1-multi-model-routing.md` |
+| Plan (Phase 2 POC) | `docs/plans/2026-03-11-agent-framework-poc.md` |
+| Plan (Phase 3.1) | `docs/plans/2026-03-11-phase3-1-reactagent-full-migration.md` |

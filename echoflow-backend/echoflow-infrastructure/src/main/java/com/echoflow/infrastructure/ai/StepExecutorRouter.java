@@ -12,29 +12,30 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.Resource;
 import org.springframework.stereotype.Component;
 
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.Map;
 
 /**
- * Routes step execution to the appropriate executor based on {@link StepType}
- * and resolves the correct {@link ChatClient} for each step type via multi-model routing.
+ * Routes step execution to the appropriate ReactAgent-backed executor based on
+ * {@link StepType} and resolves the correct {@link ChatClient} for each step type
+ * via multi-model routing.
  *
- * <p>This is the single {@link StepExecutorPort} implementation registered as a Spring component.
- * Internally it delegates to specialized executors for each step type, passing the
- * routing-resolved ChatClient per call.</p>
+ * <p>All step types are executed via {@link ReactAgentStepExecutor} subclasses
+ * (primary path). When the ReactAgent path fails, execution falls back to the
+ * original {@link LlmStepExecutor} subclass with the fallback {@link ChatClient}.</p>
  *
- * <p>When the primary model fails (all retries exhausted), it automatically falls back
- * to the configured fallback model if different from the primary.</p>
+ * <p>This is the single {@link StepExecutorPort} implementation registered as a
+ * Spring component.</p>
  */
 @Component
 public class StepExecutorRouter implements StepExecutorPort {
 
     private static final Logger log = LoggerFactory.getLogger(StepExecutorRouter.class);
 
-    private final LlmThinkExecutor thinkExecutor;
-    private final LlmResearchExecutor researchExecutor;
-    private final LlmWriteExecutor writeExecutor;
-    private final LlmNotifyExecutor notifyExecutor;
+    private final Map<StepType, ReactAgentStepExecutor> reactExecutors;
+    private final Map<StepType, LlmStepExecutor> llmExecutors;
     private final Map<StepType, ChatClient> primaryClients;
     private final ChatClient fallbackClient;
 
@@ -52,6 +53,7 @@ public class StepExecutorRouter implements StepExecutorPort {
                               @Value("${echoflow.webhook.url:}") String webhookUrl,
                               @Value("${echoflow.webhook.connect-timeout:5s}") Duration webhookConnectTimeout,
                               @Value("${echoflow.webhook.read-timeout:10s}") Duration webhookReadTimeout) {
+        // Tools
         var gitHubSearchTool = new GitHubSearchTool(
                 githubBaseUrl, githubToken,
                 githubConnectTimeout, githubReadTimeout,
@@ -59,11 +61,7 @@ public class StepExecutorRouter implements StepExecutorPort {
         var webhookNotifyTool = new WebhookNotifyTool(
                 webhookUrl, webhookConnectTimeout, webhookReadTimeout);
 
-        this.thinkExecutor = new LlmThinkExecutor(thinkPrompt);
-        this.researchExecutor = new LlmResearchExecutor(researchPrompt, gitHubSearchTool);
-        this.writeExecutor = new LlmWriteExecutor(writePrompt);
-        this.notifyExecutor = new LlmNotifyExecutor(notifyPrompt, webhookNotifyTool);
-
+        // Routing
         var routing = properties.routing();
         this.primaryClients = Map.of(
                 StepType.THINK, chatClientProvider.resolve(routing.aliasFor("think")),
@@ -71,31 +69,66 @@ public class StepExecutorRouter implements StepExecutorPort {
                 StepType.WRITE, chatClientProvider.resolve(routing.aliasFor("write")),
                 StepType.NOTIFY, chatClientProvider.resolve(routing.aliasFor("notify")));
         this.fallbackClient = chatClientProvider.resolve(routing.fallback());
+
+        // Prompt content
+        var thinkContent = readPromptContent(thinkPrompt);
+        var researchContent = readPromptContent(researchPrompt);
+        var writeContent = readPromptContent(writePrompt);
+        var notifyContent = readPromptContent(notifyPrompt);
+
+        // ReactAgent executors (primary path)
+        this.reactExecutors = Map.of(
+                StepType.THINK, new ReactAgentThinkExecutor(
+                        primaryClients.get(StepType.THINK), thinkContent),
+                StepType.RESEARCH, new ReactAgentResearchExecutor(
+                        primaryClients.get(StepType.RESEARCH), researchContent, gitHubSearchTool),
+                StepType.WRITE, new ReactAgentWriteExecutor(
+                        primaryClients.get(StepType.WRITE), writeContent),
+                StepType.NOTIFY, new ReactAgentNotifyExecutor(
+                        primaryClients.get(StepType.NOTIFY), notifyContent, webhookNotifyTool));
+
+        // LLM executors (fallback path)
+        this.llmExecutors = Map.of(
+                StepType.THINK, new LlmThinkExecutor(thinkPrompt),
+                StepType.RESEARCH, new LlmResearchExecutor(researchPrompt, gitHubSearchTool),
+                StepType.WRITE, new LlmWriteExecutor(writePrompt),
+                StepType.NOTIFY, new LlmNotifyExecutor(notifyPrompt, webhookNotifyTool));
+    }
+
+    /**
+     * Package-private constructor for testing — allows injecting pre-built executors.
+     */
+    StepExecutorRouter(Map<StepType, ReactAgentStepExecutor> reactExecutors,
+                       Map<StepType, LlmStepExecutor> llmExecutors,
+                       Map<StepType, ChatClient> primaryClients,
+                       ChatClient fallbackClient) {
+        this.reactExecutors = reactExecutors;
+        this.llmExecutors = llmExecutors;
+        this.primaryClients = primaryClients;
+        this.fallbackClient = fallbackClient;
     }
 
     @Override
     public StepOutput execute(StepExecutionContext context) {
-        var executor = resolveExecutor(context.stepType());
-        var primaryClient = primaryClients.get(context.stepType());
-
+        var reactExecutor = reactExecutors.get(context.stepType());
         try {
-            return executor.execute(context, primaryClient);
+            return reactExecutor.execute(context);
         } catch (StepExecutionException e) {
+            var primaryClient = primaryClients.get(context.stepType());
             if (fallbackClient == primaryClient) {
                 throw e;
             }
-            log.warn("Primary model failed for step '{}' (type={}), attempting fallback: {}",
+            log.warn("ReactAgent failed for step '{}' (type={}), fallback to LLM: {}",
                     context.stepName(), context.stepType(), e.getMessage());
-            return executor.execute(context, fallbackClient);
+            return llmExecutors.get(context.stepType()).execute(context, fallbackClient);
         }
     }
 
-    private LlmStepExecutor resolveExecutor(StepType type) {
-        return switch (type) {
-            case THINK -> thinkExecutor;
-            case RESEARCH -> researchExecutor;
-            case WRITE -> writeExecutor;
-            case NOTIFY -> notifyExecutor;
-        };
+    private static String readPromptContent(Resource resource) {
+        try (var is = resource.getInputStream()) {
+            return new String(is.readAllBytes(), StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            throw new IllegalStateException("Failed to read prompt resource: " + resource, e);
+        }
     }
 }

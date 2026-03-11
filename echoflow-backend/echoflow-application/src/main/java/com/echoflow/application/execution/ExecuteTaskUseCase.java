@@ -9,14 +9,14 @@ import org.springframework.transaction.support.TransactionOperations;
 
 import java.time.Clock;
 import java.time.Instant;
-import java.util.ArrayList;
-import java.util.List;
 
 /**
  * Use case: execute a submitted task through a pipeline of steps.
  *
- * <p>Steps are planned by an LLM via {@link TaskPlannerPort}, then each step
- * is executed by the {@link StepExecutorPort} (which may call LLM, tools, etc.).</p>
+ * <p>Steps are planned by an LLM via {@link TaskPlannerPort}, then executed
+ * sequentially via {@link GraphOrchestrationPort} (StateGraph-driven linear chain).
+ * The {@link GraphOrchestrationPort.StepProgressListener} callback ensures domain
+ * model updates and SSE events happen at the same timing as the original while-loop.</p>
  *
  * <p>Transaction boundaries are managed programmatically via {@link TransactionOperations}
  * to ensure LLM/remote calls never execute inside a database transaction (Rule 4).</p>
@@ -28,7 +28,7 @@ public class ExecuteTaskUseCase {
     private final ExecutionRepository executionRepository;
     private final ExecutionEventPublisher eventPublisher;
     private final TaskPlannerPort taskPlanner;
-    private final StepExecutorPort stepExecutor;
+    private final GraphOrchestrationPort graphOrchestrator;
     private final Clock clock;
     private final TransactionOperations tx;
 
@@ -36,14 +36,14 @@ public class ExecuteTaskUseCase {
                               ExecutionRepository executionRepository,
                               ExecutionEventPublisher eventPublisher,
                               TaskPlannerPort taskPlanner,
-                              StepExecutorPort stepExecutor,
+                              GraphOrchestrationPort graphOrchestrator,
                               Clock clock,
                               TransactionOperations tx) {
         this.taskRepository = taskRepository;
         this.executionRepository = executionRepository;
         this.eventPublisher = eventPublisher;
         this.taskPlanner = taskPlanner;
-        this.stepExecutor = stepExecutor;
+        this.graphOrchestrator = graphOrchestrator;
         this.clock = clock;
         this.tx = tx;
     }
@@ -103,51 +103,67 @@ public class ExecuteTaskUseCase {
     }
 
     /**
-     * Phase 2: Execute each step sequentially. LLM calls happen outside
-     * transactions; only DB saves use short implicit transactions.
+     * Phase 2: Execute each step via StateGraph linear chain.
+     *
+     * <p>Delegates to {@link GraphOrchestrationPort} which drives execution via
+     * StateGraph. The {@link GraphOrchestrationPort.StepProgressListener} callback
+     * performs domain model updates and event publishing at each step boundary,
+     * preserving the same timing as the original while-loop.</p>
+     *
+     * <p>OverAllState automatically accumulates step outputs (APPEND strategy),
+     * replacing the manual {@code previousOutputs} list.</p>
      */
     private void runExecution(Execution execution) {
         var task = taskRepository.findById(execution.taskId())
                 .orElseThrow(() -> new EntityNotFoundException("Task", execution.taskId()));
         var taskDescription = task.description();
-        var previousOutputs = new ArrayList<String>();
+
+        // Reconstruct planned steps from execution for the graph
+        var plannedSteps = execution.steps().stream()
+                .map(s -> new TaskPlannerPort.PlannedStep(s.name(), s.type()))
+                .toList();
+
+        // Mutable holder for the current running step (used across callbacks)
+        var currentStep = new ExecutionStep[1];
 
         try {
-            while (execution.hasPendingSteps()) {
-                var step = execution.startNextStep();
-                var now = clock.instant();
+            graphOrchestrator.executeSteps(taskDescription, plannedSteps,
+                    new GraphOrchestrationPort.StepProgressListener() {
 
-                eventPublisher.publish(new ExecutionEvent.StepStarted(
-                        execution.id(), step.id(), step.name(), now));
+                        @Override
+                        public void onStepStarting(String stepName, StepType stepType) {
+                            var step = execution.startNextStep();
+                            currentStep[0] = step;
+                            eventPublisher.publish(new ExecutionEvent.StepStarted(
+                                    execution.id(), step.id(), step.name(), clock.instant()));
+                            appendLog(execution, step.id(), LogType.ACTION,
+                                    "Executing: " + step.name(), clock.instant());
+                        }
 
-                try {
-                    var context = new StepExecutionContext(
-                            taskDescription, step.name(), step.type(),
-                            List.copyOf(previousOutputs));
+                        @Override
+                        public void onStepCompleted(String stepName, String output) {
+                            var step = currentStep[0];
+                            appendLog(execution, step.id(), LogType.OBSERVATION,
+                                    output, clock.instant());
+                            completeStep(execution, step.id(), output);
+                        }
 
-                    appendLog(execution, step.id(), LogType.ACTION,
-                            "Executing: " + step.name(), now);
+                        @Override
+                        public void onStepSkipped(String stepName, String reason) {
+                            var step = currentStep[0];
+                            appendLog(execution, step.id(), LogType.ERROR,
+                                    "Step degraded: " + reason, clock.instant());
+                            skipStep(execution, step.id(), reason);
+                        }
 
-                    var result = stepExecutor.execute(context);
-
-                    appendLog(execution, step.id(), LogType.OBSERVATION,
-                            result.output(), clock.instant());
-
-                    completeStep(execution, step.id(), result.output());
-                    previousOutputs.add(result.output());
-                } catch (StepExecutionException e) {
-                    appendLog(execution, step.id(), LogType.ERROR,
-                            "Step degraded: " + e.getMessage(), clock.instant());
-                    skipStep(execution, step.id(), e.getMessage());
-                    // Skipped step output not added to previousOutputs — continue to next step
-                } catch (Exception e) {
-                    appendLog(execution, step.id(), LogType.ERROR,
-                            e.getMessage(), clock.instant());
-                    failStep(execution, step.id(), e.getMessage());
-                    failExecution(execution, e.getMessage());
-                    return;
-                }
-            }
+                        @Override
+                        public void onStepFailed(String stepName, String reason) {
+                            var step = currentStep[0];
+                            appendLog(execution, step.id(), LogType.ERROR,
+                                    reason, clock.instant());
+                            failStep(execution, step.id(), reason);
+                        }
+                    });
 
             completeExecution(execution);
         } catch (Exception e) {
