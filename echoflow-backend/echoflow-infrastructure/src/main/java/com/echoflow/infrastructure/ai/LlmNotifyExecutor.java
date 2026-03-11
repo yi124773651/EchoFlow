@@ -15,14 +15,13 @@ class LlmNotifyExecutor extends LlmStepExecutor {
 
     private final WebhookNotifyTool webhookNotifyTool;
 
-    LlmNotifyExecutor(ChatClient chatClient, Resource promptTemplate,
-                       WebhookNotifyTool webhookNotifyTool) {
-        super(chatClient, promptTemplate);
+    LlmNotifyExecutor(Resource promptTemplate, WebhookNotifyTool webhookNotifyTool) {
+        super(promptTemplate);
         this.webhookNotifyTool = webhookNotifyTool;
     }
 
     @Override
-    protected String callLlm(StepExecutionContext context) {
+    protected String callLlm(StepExecutionContext context, ChatClient chatClient) {
         return chatClient.prompt()
                 .user(u -> u.text(promptTemplate)
                         .param("taskDescription", context.taskDescription())

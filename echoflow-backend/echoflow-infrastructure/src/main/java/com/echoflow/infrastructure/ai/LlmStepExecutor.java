@@ -15,6 +15,9 @@ import java.util.List;
  *
  * <p>Encapsulates retry logic, output validation, and truncation.
  * Subclasses override {@link #callLlm} to customize prompt parameters.</p>
+ *
+ * <p>The {@link ChatClient} is passed per-call (not held as a field) to support
+ * multi-model routing — different step types can use different models.</p>
  */
 abstract class LlmStepExecutor {
 
@@ -22,20 +25,18 @@ abstract class LlmStepExecutor {
     static final int MAX_RETRIES = 2;
     private static final int MAX_OUTPUT_LENGTH = 10_000;
 
-    protected final ChatClient chatClient;
     protected final Resource promptTemplate;
 
-    LlmStepExecutor(ChatClient chatClient, Resource promptTemplate) {
-        this.chatClient = chatClient;
+    LlmStepExecutor(Resource promptTemplate) {
         this.promptTemplate = promptTemplate;
     }
 
-    StepOutput execute(StepExecutionContext context) {
+    StepOutput execute(StepExecutionContext context, ChatClient chatClient) {
         Exception lastException = null;
 
         for (int attempt = 1; attempt <= MAX_RETRIES; attempt++) {
             try {
-                var output = callLlm(context);
+                var output = callLlm(context, chatClient);
                 return validate(output, context.stepName());
             } catch (Exception e) {
                 lastException = e;
@@ -54,7 +55,7 @@ abstract class LlmStepExecutor {
      * taskDescription, stepName, and previousContext. Subclasses may override
      * to customize parameters (e.g. THINK steps skip previousContext).
      */
-    protected String callLlm(StepExecutionContext context) {
+    protected String callLlm(StepExecutionContext context, ChatClient chatClient) {
         return chatClient.prompt()
                 .user(u -> u.text(promptTemplate)
                         .param("taskDescription", context.taskDescription())

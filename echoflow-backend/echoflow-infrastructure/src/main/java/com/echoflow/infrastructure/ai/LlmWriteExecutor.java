@@ -1,6 +1,5 @@
 package com.echoflow.infrastructure.ai;
 
-import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.core.io.Resource;
 
 /**
@@ -9,7 +8,7 @@ import org.springframework.core.io.Resource;
  */
 class LlmWriteExecutor extends LlmStepExecutor {
 
-    LlmWriteExecutor(ChatClient chatClient, Resource promptTemplate) {
-        super(chatClient, promptTemplate);
+    LlmWriteExecutor(Resource promptTemplate) {
+        super(promptTemplate);
     }
 }

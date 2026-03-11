@@ -1,6 +1,8 @@
 package com.echoflow.web.config;
 
+import com.echoflow.infrastructure.ai.MultiModelProperties;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.client.JdkClientHttpRequestFactory;
@@ -18,8 +20,11 @@ import java.time.Duration;
  * automatically applies timeouts to all AI model calls.</p>
  *
  * <p>Uses {@link JdkClientHttpRequestFactory} for virtual-thread compatibility.</p>
+ *
+ * <p>Also registers {@link MultiModelProperties} for multi-model routing configuration.</p>
  */
 @Configuration
+@EnableConfigurationProperties(MultiModelProperties.class)
 public class AiClientConfig {
 
     @Bean

@@ -10,12 +10,12 @@ import org.springframework.core.io.Resource;
  */
 class LlmThinkExecutor extends LlmStepExecutor {
 
-    LlmThinkExecutor(ChatClient chatClient, Resource promptTemplate) {
-        super(chatClient, promptTemplate);
+    LlmThinkExecutor(Resource promptTemplate) {
+        super(promptTemplate);
     }
 
     @Override
-    protected String callLlm(StepExecutionContext context) {
+    protected String callLlm(StepExecutionContext context, ChatClient chatClient) {
         return chatClient.prompt()
                 .user(u -> u.text(promptTemplate)
                         .param("taskDescription", context.taskDescription())

@@ -85,7 +85,7 @@ echoflow/                          (root aggregator pom)
 
 - **Domain** (`com.echoflow.domain`): Aggregates (`Task`, `Execution`), entities (`ExecutionStep`), value objects (`TaskId`, `StepLog`, enums), repository interfaces. No Spring, no JPA, no HTTP.
 - **Application** (`com.echoflow.application`): Use cases (`SubmitTaskUseCase`, `ExecuteTaskUseCase`), port interfaces (`TaskPlannerPort`, `StepExecutorPort`, `ExecutionEventPublisher`), commands/results as records. Owns transaction boundaries via `TransactionOperations` (programmatic) or `@Transactional` (declarative, only on methods called externally through Spring proxy).
-- **Infrastructure** (`com.echoflow.infrastructure`): JPA entities + repository implementations in `persistence/`, LLM executors in `ai/` (`StepExecutorRouter` routes by `StepType` to `LlmThinkExecutor`, `LlmResearchExecutor`, `LlmWriteExecutor`, `LlmNotifyExecutor`). Only `StepExecutorRouter` is public; internal executors are package-private.
+- **Infrastructure** (`com.echoflow.infrastructure`): JPA entities + repository implementations in `persistence/`, LLM executors in `ai/` (`StepExecutorRouter` routes by `StepType` to `LlmThinkExecutor`, `LlmResearchExecutor`, `LlmWriteExecutor`, `LlmNotifyExecutor`). Multi-model routing via `ChatClientProvider` (uses Spring AI `mutate()` to create per-provider ChatClients) and `MultiModelProperties` (`@ConfigurationProperties`). Only `StepExecutorRouter`, `AiTaskPlanner`, `ChatClientProvider`, and `MultiModelProperties` are public; internal executors and tools are package-private.
 - **Web** (`com.echoflow.web`): Thin controllers, `GlobalExceptionHandler` (`@RestControllerAdvice` → `ProblemDetail`), `SseExecutionEventPublisher` (SSE streaming), `ClockConfig`. Flyway migrations in `src/main/resources/db/migration/`. Prompt templates in `src/main/resources/prompts/*.st`.
 
 ### Domain Model (two aggregate roots)
@@ -106,7 +106,7 @@ echoflow/                          (root aggregator pom)
 
 - **Port/Adapter**: Application defines port interfaces; Infrastructure implements them.
 - **SSE streaming**: `SseExecutionEventPublisher` → frontend `useExecutionStream` hook. Events include `executionId`, `type`, `timestamp`, `payload`. Polling is forbidden.
-- **LLM step routing**: `StepExecutorRouter` dispatches to type-specific executors via switch expression.
+- **LLM step routing**: `StepExecutorRouter` dispatches to type-specific executors via switch expression. `ChatClientProvider` resolves per-StepType `ChatClient` from `MultiModelProperties` routing config. Fallback: if primary model fails all retries, automatically switches to fallback model.
 - **JPA ↔ Domain mapping**: JPA entities (`TaskEntity`, `ExecutionEntity`) are separate from domain models; explicit mapping in repository implementations.
 
 ## 5. Architecture Rules

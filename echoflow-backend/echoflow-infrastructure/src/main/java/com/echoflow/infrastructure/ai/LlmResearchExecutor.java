@@ -14,14 +14,13 @@ class LlmResearchExecutor extends LlmStepExecutor {
 
     private final GitHubSearchTool gitHubSearchTool;
 
-    LlmResearchExecutor(ChatClient chatClient, Resource promptTemplate,
-                         GitHubSearchTool gitHubSearchTool) {
-        super(chatClient, promptTemplate);
+    LlmResearchExecutor(Resource promptTemplate, GitHubSearchTool gitHubSearchTool) {
+        super(promptTemplate);
         this.gitHubSearchTool = gitHubSearchTool;
     }
 
     @Override
-    protected String callLlm(StepExecutionContext context) {
+    protected String callLlm(StepExecutionContext context, ChatClient chatClient) {
         return chatClient.prompt()
                 .user(u -> u.text(promptTemplate)
                         .param("taskDescription", context.taskDescription())

@@ -33,9 +33,10 @@ public class AiTaskPlanner implements TaskPlannerPort {
     private final ChatClient chatClient;
     private final Resource promptTemplate;
 
-    public AiTaskPlanner(ChatClient.Builder chatClientBuilder,
+    public AiTaskPlanner(ChatClientProvider chatClientProvider,
+                         MultiModelProperties properties,
                          @Value("classpath:prompts/task-planner.st") Resource promptTemplate) {
-        this.chatClient = chatClientBuilder.build();
+        this.chatClient = chatClientProvider.resolve(properties.routing().aliasFor("think"));
         this.promptTemplate = promptTemplate;
     }
 

@@ -1,7 +1,7 @@
 # EchoFlow 整体计划
 
 > 创建时间: 2026-03-11 15:00 CST
-> 最后更新: 2026-03-11 16:30 CST
+> 最后更新: 2026-03-11 18:00 CST
 
 ---
 
@@ -99,33 +99,35 @@ MVP 原始计划见 `docs/plan/mvp-plan.archived.md`。
 
 ---
 
-## Phase 1: 多模型路由层 ⏳
+## Phase 1: 多模型路由层 ✅
 
-> 状态: 待启动
+> 状态: 已完成 (2026-03-11)
 > 先决条件: Phase 0 完成
 > 目标: 支持 DashScope + OpenAI + DeepSeek，按策略智能选模型
+> 实施计划: `docs/plans/2026-03-11-1700-phase1-multi-model-routing.md`
+> Devlog: `docs/devlog/012-multi-model-routing.md`
 
-### 架构设计
+### 实际架构（与原设计的偏差）
+
+原设计预期在 Application 层新增 `ModelRouterPort`，但实际实施中发现按 StepType 路由是纯基础设施关注点（StepType 已通过 `StepExecutionContext` 传入），因此将路由逻辑完全封装在 Infrastructure 层，Application 层零改动。若未来需要用户偏好选模型，再引入 Port。
 
 ```
-Application 层
-├── ModelRouterPort (接口)
-│   └── resolve(StepType, UserPreference?) → ChatModel
-
 Infrastructure 层
-├── MultiModelRouter (implements ModelRouterPort)
-│   ├── 按 StepType 路由: THINK→强模型, RESEARCH/NOTIFY→快模型
-│   ├── 用户偏好覆盖: Task 提交时可选 provider
-│   └── Fallback: 主模型异常 → 自动切备用模型
-├── DashScopeChatModelFactory
-├── OpenAiChatModelFactory
-└── DeepSeekChatModelFactory
+├── ChatClientProvider (创建/缓存多 ChatClient 实例)
+│   └── resolve(alias) → ChatClient
+│   └── 使用 Spring AI 1.1.2 mutate() API 派生 per-provider 实例
+├── StepExecutorRouter (implements StepExecutorPort)
+│   ├── 按 StepType 路由: Map<StepType, ChatClient> primaryClients
+│   └── Fallback: 主模型异常 → 自动切备用 ChatClient
+└── MultiModelProperties (@ConfigurationProperties)
+    ├── models: { alias → { base-url, api-key, model } }
+    └── routing: { step-aliases: { think→alias, ... }, fallback: alias }
 
 Web 层 (application.yml)
-└── echoflow.ai.models:
-    ├── dashscope: { api-key, models: [qwen-max, qwen-plus, qwen-turbo] }
-    ├── openai: { api-key, base-url, models: [gpt-4o, gpt-4o-mini] }
-    └── deepseek: { api-key, models: [deepseek-chat, deepseek-reasoner] }
+└── echoflow.ai:
+    ├── routing.step-aliases: { think: dashscope-strong, ... }
+    ├── routing.fallback: openai-default
+    └── models: { dashscope-strong: { base-url, api-key, model }, ... }
 ```
 
 ### 改动范围
@@ -133,17 +135,18 @@ Web 层 (application.yml)
 | 层 | 改动 |
 |----|------|
 | Domain | **无** |
-| Application | 新增 `ModelRouterPort` 接口 |
-| Infrastructure | 新增 `MultiModelRouter` + 各 Provider Factory；修改 `StepExecutorRouter` 注入方式 |
-| Web | `application.yml` 多模型配置项；可能新增 `MultiModelConfig` 配置类 |
-| 前端 | Task 提交表单可选增 "模型偏好" 下拉（可选，低优先级） |
+| Application | **无**（偏离原设计，不引入 ModelRouterPort） |
+| Infrastructure | 新增 `ChatClientProvider` + `MultiModelProperties`；重构 `LlmStepExecutor`/子类/`StepExecutorRouter`/`AiTaskPlanner` |
+| Web | `AiClientConfig` 添加 `@EnableConfigurationProperties`；`application.yml` 添加 routing + models |
+| 前端 | **无**（用户偏好下拉延迟到用户偏好路由需求时） |
 
 ### 验收标准
 
-- [ ] THINK step 使用强模型 (如 qwen-max)，RESEARCH/NOTIFY 使用快模型 (如 qwen-turbo)
-- [ ] 主模型超时/异常时自动 fallback 到备用模型，日志可观测
-- [ ] DashScope + OpenAI 双 provider 共存，可通过配置切换
-- [ ] 现有测试仍全部通过 (Mock 场景不受影响)
+- [x] THINK step 可配置使用强模型，RESEARCH/NOTIFY 可配置使用快模型（通过 `routing.step-aliases`）
+- [x] 主模型超时/异常时自动 fallback 到备用模型，日志可观测
+- [x] DashScope + OpenAI + DeepSeek 双/多 provider 共存，可通过配置切换
+- [x] 81 个单元测试全部通过（原 70 + 新增 11）
+- [x] 空配置下行为与改动前完全一致（向后兼容）
 
 ---
 
@@ -234,5 +237,7 @@ Web 层 (application.yml)
 | 架构指南 | `docs/claude/backend.md`, `docs/claude/agent.md` |
 | Devlog 001-010 (MVP) | `docs/devlog/mvp-archived/` |
 | Devlog 011 (Phase 0) | `docs/devlog/011-version-upgrade.md` |
+| Devlog 012 (Phase 1) | `docs/devlog/012-multi-model-routing.md` |
 | Plans (MVP) | `docs/plans/mvp-archived/` |
 | Plan (Phase 0) | `docs/plans/2026-03-11-1530-phase0-version-upgrade.md` |
+| Plan (Phase 1) | `docs/plans/2026-03-11-1700-phase1-multi-model-routing.md` |
