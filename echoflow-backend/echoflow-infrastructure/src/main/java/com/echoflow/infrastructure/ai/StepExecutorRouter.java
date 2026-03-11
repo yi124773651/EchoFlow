@@ -1,5 +1,7 @@
 package com.echoflow.infrastructure.ai;
 
+import com.alibaba.cloud.ai.graph.agent.ReactAgent;
+import com.alibaba.cloud.ai.graph.agent.hook.modelcalllimit.ModelCallLimitHook;
 import com.echoflow.application.execution.StepExecutionContext;
 import com.echoflow.application.execution.StepExecutionException;
 import com.echoflow.application.execution.StepExecutorPort;
@@ -12,6 +14,8 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.Resource;
 import org.springframework.stereotype.Component;
 
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.Map;
 
@@ -23,15 +27,18 @@ import java.util.Map;
  * Internally it delegates to specialized executors for each step type, passing the
  * routing-resolved ChatClient per call.</p>
  *
- * <p>When the primary model fails (all retries exhausted), it automatically falls back
- * to the configured fallback model if different from the primary.</p>
+ * <p><b>POC-2:</b> THINK steps are now executed via {@link ReactAgentThinkExecutor} backed by
+ * Spring AI Alibaba's {@link ReactAgent}. Other step types continue using the existing
+ * {@link LlmStepExecutor} path. When the ReactAgent-backed primary fails, fallback uses
+ * the original {@link LlmThinkExecutor} with the fallback ChatClient.</p>
  */
 @Component
 public class StepExecutorRouter implements StepExecutorPort {
 
     private static final Logger log = LoggerFactory.getLogger(StepExecutorRouter.class);
 
-    private final LlmThinkExecutor thinkExecutor;
+    private final ReactAgentThinkExecutor reactAgentThinkExecutor;
+    private final LlmThinkExecutor thinkExecutor; // kept for fallback
     private final LlmResearchExecutor researchExecutor;
     private final LlmWriteExecutor writeExecutor;
     private final LlmNotifyExecutor notifyExecutor;
@@ -71,10 +78,57 @@ public class StepExecutorRouter implements StepExecutorPort {
                 StepType.WRITE, chatClientProvider.resolve(routing.aliasFor("write")),
                 StepType.NOTIFY, chatClientProvider.resolve(routing.aliasFor("notify")));
         this.fallbackClient = chatClientProvider.resolve(routing.fallback());
+
+        // POC-2: Build ReactAgent for THINK steps
+        var thinkChatClient = primaryClients.get(StepType.THINK);
+        String thinkInstruction = readPromptContent(thinkPrompt);
+        this.reactAgentThinkExecutor = new ReactAgentThinkExecutor(
+                buildThinkAgent(thinkChatClient, thinkInstruction));
+    }
+
+    /**
+     * Package-private constructor for testing — allows injecting a pre-built
+     * ReactAgentThinkExecutor and other executors directly.
+     */
+    StepExecutorRouter(ReactAgentThinkExecutor reactAgentThinkExecutor,
+                       LlmThinkExecutor thinkExecutor,
+                       LlmResearchExecutor researchExecutor,
+                       LlmWriteExecutor writeExecutor,
+                       LlmNotifyExecutor notifyExecutor,
+                       Map<StepType, ChatClient> primaryClients,
+                       ChatClient fallbackClient) {
+        this.reactAgentThinkExecutor = reactAgentThinkExecutor;
+        this.thinkExecutor = thinkExecutor;
+        this.researchExecutor = researchExecutor;
+        this.writeExecutor = writeExecutor;
+        this.notifyExecutor = notifyExecutor;
+        this.primaryClients = primaryClients;
+        this.fallbackClient = fallbackClient;
     }
 
     @Override
     public StepOutput execute(StepExecutionContext context) {
+        if (context.stepType() == StepType.THINK) {
+            return executeThinkWithReactAgent(context);
+        }
+        return executeLlmStep(context);
+    }
+
+    private StepOutput executeThinkWithReactAgent(StepExecutionContext context) {
+        try {
+            return reactAgentThinkExecutor.execute(context);
+        } catch (StepExecutionException e) {
+            var primaryClient = primaryClients.get(StepType.THINK);
+            if (fallbackClient == primaryClient) {
+                throw e;
+            }
+            log.warn("ReactAgent THINK failed for step '{}', attempting LLM fallback: {}",
+                    context.stepName(), e.getMessage());
+            return thinkExecutor.execute(context, fallbackClient);
+        }
+    }
+
+    private StepOutput executeLlmStep(StepExecutionContext context) {
         var executor = resolveExecutor(context.stepType());
         var primaryClient = primaryClients.get(context.stepType());
 
@@ -97,5 +151,22 @@ public class StepExecutorRouter implements StepExecutorPort {
             case WRITE -> writeExecutor;
             case NOTIFY -> notifyExecutor;
         };
+    }
+
+    private static ReactAgent buildThinkAgent(ChatClient chatClient, String instruction) {
+        return ReactAgent.builder()
+                .name("think_executor")
+                .chatClient(chatClient)
+                .instruction(instruction)
+                .hooks(ModelCallLimitHook.builder().runLimit(5).build())
+                .build();
+    }
+
+    private static String readPromptContent(Resource resource) {
+        try (var is = resource.getInputStream()) {
+            return new String(is.readAllBytes(), StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            throw new IllegalStateException("Failed to read prompt resource: " + resource, e);
+        }
     }
 }

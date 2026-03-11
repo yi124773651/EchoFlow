@@ -150,13 +150,15 @@ Web 层 (application.yml)
 
 ---
 
-## Phase 2: Agent Framework POC ⏳
+## Phase 2: Agent Framework POC ✅
 
-> 状态: 调研完成，待启动 POC
+> 状态: **已完成** — Go 决策，推荐方案 A
 > 先决条件: Phase 0 完成 (可与 Phase 1 并行)
 > 目标: 验证 Agent Framework 能力边界，产出 Go/No-Go 决策
 > 实施计划: `docs/plans/2026-03-11-agent-framework-poc.md`
-> Devlog: `docs/devlog/013-agent-framework-research.md`
+> POC 报告: `docs/research/agent-framework-poc-report.md`
+> Devlog (调研): `docs/devlog/013-agent-framework-research.md`
+> Devlog (POC): `docs/devlog/014-agent-framework-poc.md`
 
 ### 调研成果 (2026-03-11)
 

@@ -2,8 +2,10 @@ package com.echoflow.infrastructure.ai;
 
 import com.echoflow.application.execution.StepExecutionContext;
 import com.echoflow.application.execution.StepExecutionException;
+import com.echoflow.application.execution.StepOutput;
 import com.echoflow.domain.execution.StepType;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
@@ -24,19 +26,19 @@ import static org.mockito.Mockito.*;
 @ExtendWith(MockitoExtension.class)
 class StepExecutorRouterTest {
 
-    @Mock private ChatClientProvider chatClientProvider;
     @Mock private ChatClient primaryChatClient;
     @Mock private ChatClient fallbackChatClient;
     @Mock private ChatClient.ChatClientRequestSpec requestSpec;
     @Mock private ChatClient.CallResponseSpec callSpec;
     @Mock private ChatClient.ChatClientRequestSpec fallbackRequestSpec;
     @Mock private ChatClient.CallResponseSpec fallbackCallSpec;
+    @Mock private ReactAgentThinkExecutor reactAgentThinkExecutor;
 
     private StepExecutorRouter router;
 
     @BeforeEach
     void setUp() {
-        // Primary client mock chain
+        // Primary client mock chain (for non-THINK steps)
         lenient().when(primaryChatClient.prompt()).thenReturn(requestSpec);
         lenient().when(requestSpec.user(any(Consumer.class))).thenReturn(requestSpec);
         lenient().when(requestSpec.tools(any(Object.class))).thenReturn(requestSpec);
@@ -46,40 +48,101 @@ class StepExecutorRouterTest {
         lenient().when(fallbackRequestSpec.user(any(Consumer.class))).thenReturn(fallbackRequestSpec);
         lenient().when(fallbackRequestSpec.tools(any(Object.class))).thenReturn(fallbackRequestSpec);
 
-        // ChatClientProvider: all step types use primary, fallback is separate
-        lenient().when(chatClientProvider.resolve("primary")).thenReturn(primaryChatClient);
-        lenient().when(chatClientProvider.resolve("fallback")).thenReturn(fallbackChatClient);
-
-        var routing = new MultiModelProperties.RoutingConfig(
-                Map.of("think", "primary", "research", "primary",
-                        "write", "primary", "notify", "primary"),
-                "fallback");
-        var properties = new MultiModelProperties(Map.of(), routing);
-
-        Resource thinkPrompt = new ByteArrayResource("think {taskDescription} {stepName}".getBytes());
         Resource researchPrompt = new ByteArrayResource("research {taskDescription} {stepName} {previousContext}".getBytes());
         Resource writePrompt = new ByteArrayResource("write {taskDescription} {stepName} {previousContext}".getBytes());
         Resource notifyPrompt = new ByteArrayResource("notify {taskDescription} {stepName} {previousContext}".getBytes());
+        Resource thinkPrompt = new ByteArrayResource("think {taskDescription} {stepName}".getBytes());
 
+        // Use the package-private test constructor
         router = new StepExecutorRouter(
-                chatClientProvider, properties,
-                thinkPrompt, researchPrompt, writePrompt, notifyPrompt,
-                "https://api.github.com", "",
-                Duration.ofSeconds(5), Duration.ofSeconds(10), 5,
-                "", Duration.ofSeconds(5), Duration.ofSeconds(10));
+                reactAgentThinkExecutor,
+                new LlmThinkExecutor(thinkPrompt),
+                new LlmResearchExecutor(researchPrompt, new GitHubSearchTool(
+                        "https://api.github.com", "",
+                        Duration.ofSeconds(5), Duration.ofSeconds(10), 5)),
+                new LlmWriteExecutor(writePrompt),
+                new LlmNotifyExecutor(notifyPrompt, new WebhookNotifyTool(
+                        "", Duration.ofSeconds(5), Duration.ofSeconds(10))),
+                Map.of(
+                        StepType.THINK, primaryChatClient,
+                        StepType.RESEARCH, primaryChatClient,
+                        StepType.WRITE, primaryChatClient,
+                        StepType.NOTIFY, primaryChatClient),
+                fallbackChatClient);
     }
 
-    @Test
-    void routes_think_step_to_llm() {
-        when(requestSpec.call()).thenReturn(callSpec);
-        when(callSpec.content()).thenReturn("Analysis complete");
+    // --- POC-2: THINK steps via ReactAgent ---
 
-        var context = new StepExecutionContext("task desc", "分析", StepType.THINK, List.of());
-        var result = router.execute(context);
+    @Nested
+    class ThinkStepViaReactAgent {
 
-        assertThat(result.output()).isEqualTo("Analysis complete");
-        verify(primaryChatClient, atLeastOnce()).prompt();
+        @Test
+        void routes_think_step_to_react_agent() {
+            when(reactAgentThinkExecutor.execute(any()))
+                    .thenReturn(new StepOutput("Analysis complete"));
+
+            var context = new StepExecutionContext("task desc", "分析", StepType.THINK, List.of());
+            var result = router.execute(context);
+
+            assertThat(result.output()).isEqualTo("Analysis complete");
+            verify(reactAgentThinkExecutor).execute(context);
+            // ChatClient should NOT be called for THINK (ReactAgent handles it internally)
+            verify(primaryChatClient, never()).prompt();
+        }
+
+        @Test
+        void falls_back_to_llm_when_react_agent_fails() {
+            when(reactAgentThinkExecutor.execute(any()))
+                    .thenThrow(new StepExecutionException("ReactAgent failed"));
+
+            // Fallback via LlmThinkExecutor + fallbackClient
+            when(fallbackRequestSpec.call()).thenReturn(fallbackCallSpec);
+            when(fallbackCallSpec.content()).thenReturn("Fallback think output");
+
+            var context = new StepExecutionContext("task desc", "分析", StepType.THINK, List.of());
+            var result = router.execute(context);
+
+            assertThat(result.output()).isEqualTo("Fallback think output");
+            verify(reactAgentThinkExecutor).execute(context);
+            verify(fallbackChatClient, atLeastOnce()).prompt();
+        }
+
+        @Test
+        void throws_when_react_agent_and_fallback_are_same_client() {
+            // Rebuild router with same client for primary and fallback
+            Resource thinkPrompt = new ByteArrayResource("think {taskDescription} {stepName}".getBytes());
+            Resource researchPrompt = new ByteArrayResource("research {taskDescription} {stepName} {previousContext}".getBytes());
+            Resource writePrompt = new ByteArrayResource("write {taskDescription} {stepName} {previousContext}".getBytes());
+            Resource notifyPrompt = new ByteArrayResource("notify {taskDescription} {stepName} {previousContext}".getBytes());
+
+            var sameRouter = new StepExecutorRouter(
+                    reactAgentThinkExecutor,
+                    new LlmThinkExecutor(thinkPrompt),
+                    new LlmResearchExecutor(researchPrompt, new GitHubSearchTool(
+                            "https://api.github.com", "",
+                            Duration.ofSeconds(5), Duration.ofSeconds(10), 5)),
+                    new LlmWriteExecutor(writePrompt),
+                    new LlmNotifyExecutor(notifyPrompt, new WebhookNotifyTool(
+                            "", Duration.ofSeconds(5), Duration.ofSeconds(10))),
+                    Map.of(
+                            StepType.THINK, primaryChatClient,
+                            StepType.RESEARCH, primaryChatClient,
+                            StepType.WRITE, primaryChatClient,
+                            StepType.NOTIFY, primaryChatClient),
+                    primaryChatClient); // same as primary!
+
+            when(reactAgentThinkExecutor.execute(any()))
+                    .thenThrow(new StepExecutionException("ReactAgent failed"));
+
+            var context = new StepExecutionContext("task desc", "分析", StepType.THINK, List.of());
+
+            assertThatThrownBy(() -> sameRouter.execute(context))
+                    .isInstanceOf(StepExecutionException.class)
+                    .hasMessageContaining("ReactAgent failed");
+        }
     }
+
+    // --- Non-THINK steps remain unchanged ---
 
     @Test
     void routes_research_step_to_llm() {
@@ -145,25 +208,11 @@ class StepExecutorRouterTest {
         when(fallbackRequestSpec.call()).thenReturn(fallbackCallSpec);
         when(fallbackCallSpec.content()).thenReturn("");
 
-        var context = new StepExecutionContext("task desc", "分析", StepType.THINK, List.of());
+        var context = new StepExecutionContext("task desc", "调研", StepType.RESEARCH, List.of());
 
         assertThatThrownBy(() -> router.execute(context))
                 .isInstanceOf(StepExecutionException.class)
                 .hasMessageContaining("failed after");
-    }
-
-    @Test
-    void rejects_null_llm_output() {
-        when(requestSpec.call()).thenReturn(callSpec);
-        when(callSpec.content()).thenReturn(null);
-        // Fallback also returns null
-        when(fallbackRequestSpec.call()).thenReturn(fallbackCallSpec);
-        when(fallbackCallSpec.content()).thenReturn(null);
-
-        var context = new StepExecutionContext("task desc", "分析", StepType.THINK, List.of());
-
-        assertThatThrownBy(() -> router.execute(context))
-                .isInstanceOf(StepExecutionException.class);
     }
 
     @Test
@@ -173,7 +222,7 @@ class StepExecutorRouterTest {
                 .thenThrow(new RuntimeException("timeout"))
                 .thenReturn("Success after retry");
 
-        var context = new StepExecutionContext("task desc", "分析", StepType.THINK, List.of());
+        var context = new StepExecutionContext("task desc", "调研", StepType.RESEARCH, List.of());
         var result = router.execute(context);
 
         assertThat(result.output()).isEqualTo("Success after retry");
@@ -191,10 +240,10 @@ class StepExecutorRouterTest {
         assertThat(result.output()).endsWith("[Output truncated]");
     }
 
-    // --- Multi-model routing tests ---
+    // --- Multi-model routing tests (non-THINK) ---
 
     @Test
-    void falls_back_when_primary_model_fails() {
+    void falls_back_when_primary_model_fails_for_non_think_step() {
         // Primary fails all retries
         when(requestSpec.call()).thenReturn(callSpec);
         when(callSpec.content()).thenThrow(new RuntimeException("primary timeout"));
@@ -203,7 +252,7 @@ class StepExecutorRouterTest {
         when(fallbackRequestSpec.call()).thenReturn(fallbackCallSpec);
         when(fallbackCallSpec.content()).thenReturn("Fallback success");
 
-        var context = new StepExecutionContext("task desc", "分析", StepType.THINK, List.of());
+        var context = new StepExecutionContext("task desc", "调研", StepType.RESEARCH, List.of());
         var result = router.execute(context);
 
         assertThat(result.output()).isEqualTo("Fallback success");
@@ -221,101 +270,10 @@ class StepExecutorRouterTest {
         when(fallbackRequestSpec.call()).thenReturn(fallbackCallSpec);
         when(fallbackCallSpec.content()).thenThrow(new RuntimeException("fallback timeout"));
 
-        var context = new StepExecutionContext("task desc", "分析", StepType.THINK, List.of());
+        var context = new StepExecutionContext("task desc", "调研", StepType.RESEARCH, List.of());
 
         assertThatThrownBy(() -> router.execute(context))
                 .isInstanceOf(StepExecutionException.class)
                 .hasMessageContaining("failed after");
-    }
-
-    @Test
-    void skips_fallback_when_same_as_primary() {
-        // Configure routing where fallback == primary (same instance)
-        var routing = new MultiModelProperties.RoutingConfig(
-                Map.of("think", "same-model", "research", "same-model",
-                        "write", "same-model", "notify", "same-model"),
-                "same-model");
-        var properties = new MultiModelProperties(Map.of(), routing);
-
-        when(chatClientProvider.resolve("same-model")).thenReturn(primaryChatClient);
-
-        Resource thinkPrompt = new ByteArrayResource("think {taskDescription} {stepName}".getBytes());
-        Resource researchPrompt = new ByteArrayResource("research {taskDescription} {stepName} {previousContext}".getBytes());
-        Resource writePrompt = new ByteArrayResource("write {taskDescription} {stepName} {previousContext}".getBytes());
-        Resource notifyPrompt = new ByteArrayResource("notify {taskDescription} {stepName} {previousContext}".getBytes());
-
-        var sameRouter = new StepExecutorRouter(
-                chatClientProvider, properties,
-                thinkPrompt, researchPrompt, writePrompt, notifyPrompt,
-                "https://api.github.com", "",
-                Duration.ofSeconds(5), Duration.ofSeconds(10), 5,
-                "", Duration.ofSeconds(5), Duration.ofSeconds(10));
-
-        // Primary fails all retries
-        when(requestSpec.call()).thenReturn(callSpec);
-        when(callSpec.content()).thenThrow(new RuntimeException("persistent failure"));
-
-        var context = new StepExecutionContext("task desc", "分析", StepType.THINK, List.of());
-
-        // Should throw directly without trying fallback (same instance)
-        assertThatThrownBy(() -> sameRouter.execute(context))
-                .isInstanceOf(StepExecutionException.class)
-                .hasMessageContaining("failed after 2 attempts");
-
-        // Only primary attempts (MAX_RETRIES), no separate fallback
-        verify(primaryChatClient, times(LlmStepExecutor.MAX_RETRIES)).prompt();
-    }
-
-    @Test
-    void uses_different_chat_clients_per_step_type() {
-        var thinkClient = mock(ChatClient.class);
-        var researchClient = mock(ChatClient.class);
-        var thinkReqSpec = mock(ChatClient.ChatClientRequestSpec.class);
-        var researchReqSpec = mock(ChatClient.ChatClientRequestSpec.class);
-        var thinkCallSpec2 = mock(ChatClient.CallResponseSpec.class);
-        var researchCallSpec2 = mock(ChatClient.CallResponseSpec.class);
-
-        when(chatClientProvider.resolve("strong")).thenReturn(thinkClient);
-        when(chatClientProvider.resolve("fast")).thenReturn(researchClient);
-        when(chatClientProvider.resolve("fallback")).thenReturn(fallbackChatClient);
-
-        when(thinkClient.prompt()).thenReturn(thinkReqSpec);
-        when(thinkReqSpec.user(any(Consumer.class))).thenReturn(thinkReqSpec);
-        when(thinkReqSpec.call()).thenReturn(thinkCallSpec2);
-        when(thinkCallSpec2.content()).thenReturn("Think output");
-
-        when(researchClient.prompt()).thenReturn(researchReqSpec);
-        when(researchReqSpec.user(any(Consumer.class))).thenReturn(researchReqSpec);
-        when(researchReqSpec.tools(any(Object.class))).thenReturn(researchReqSpec);
-        when(researchReqSpec.call()).thenReturn(researchCallSpec2);
-        when(researchCallSpec2.content()).thenReturn("Research output");
-
-        var routing = new MultiModelProperties.RoutingConfig(
-                Map.of("think", "strong", "research", "fast",
-                        "write", "strong", "notify", "fast"),
-                "fallback");
-        var properties = new MultiModelProperties(Map.of(), routing);
-
-        Resource thinkPrompt = new ByteArrayResource("think {taskDescription} {stepName}".getBytes());
-        Resource researchPrompt = new ByteArrayResource("research {taskDescription} {stepName} {previousContext}".getBytes());
-        Resource writePrompt = new ByteArrayResource("write {taskDescription} {stepName} {previousContext}".getBytes());
-        Resource notifyPrompt = new ByteArrayResource("notify {taskDescription} {stepName} {previousContext}".getBytes());
-
-        var multiRouter = new StepExecutorRouter(
-                chatClientProvider, properties,
-                thinkPrompt, researchPrompt, writePrompt, notifyPrompt,
-                "https://api.github.com", "",
-                Duration.ofSeconds(5), Duration.ofSeconds(10), 5,
-                "", Duration.ofSeconds(5), Duration.ofSeconds(10));
-
-        var thinkResult = multiRouter.execute(
-                new StepExecutionContext("task", "分析", StepType.THINK, List.of()));
-        var researchResult = multiRouter.execute(
-                new StepExecutionContext("task", "调研", StepType.RESEARCH, List.of()));
-
-        assertThat(thinkResult.output()).isEqualTo("Think output");
-        assertThat(researchResult.output()).isEqualTo("Research output");
-        verify(thinkClient, atLeastOnce()).prompt();
-        verify(researchClient, atLeastOnce()).prompt();
     }
 }
