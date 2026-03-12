@@ -20,8 +20,11 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.Executors;
 
 import static org.assertj.core.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
@@ -38,7 +41,7 @@ class ExecuteTaskUseCaseTest {
     @Mock private TaskPlannerPort taskPlanner;
     @Mock private GraphOrchestrationPort graphOrchestrator;
 
-    private final List<ExecutionEvent> publishedEvents = new ArrayList<>();
+    private final List<ExecutionEvent> publishedEvents = Collections.synchronizedList(new ArrayList<>());
     private ExecuteTaskUseCase useCase;
 
     @BeforeEach
@@ -255,5 +258,66 @@ class ExecuteTaskUseCaseTest {
 
         assertThatThrownBy(() -> useCase.execute(taskId))
                 .isInstanceOf(TaskPlanningException.class);
+    }
+
+    @Test
+    void execute_handles_parallel_research_callbacks_safely() {
+        var taskId = TaskId.generate();
+        var task = Task.submit(taskId, "parallel task", NOW);
+        when(taskRepository.findById(taskId)).thenReturn(Optional.of(task));
+        when(taskPlanner.planSteps("parallel task")).thenReturn(List.of(
+                new TaskPlannerPort.PlannedStep("分析", StepType.THINK),
+                new TaskPlannerPort.PlannedStep("搜索1", StepType.RESEARCH),
+                new TaskPlannerPort.PlannedStep("搜索2", StepType.RESEARCH),
+                new TaskPlannerPort.PlannedStep("撰写", StepType.WRITE)
+        ));
+
+        // Simulate parallel RESEARCH callbacks from two threads
+        doAnswer(invocation -> {
+            StepProgressListener listener = invocation.getArgument(2);
+
+            // THINK runs first (sequential)
+            listener.onStepStarting("分析", StepType.THINK);
+            listener.onStepCompleted("分析", "分析结果");
+
+            // Two RESEARCH steps fire concurrently
+            var barrier = new CyclicBarrier(2);
+            try (var executor = Executors.newFixedThreadPool(2)) {
+                executor.submit(() -> {
+                    try {
+                        barrier.await();
+                        listener.onStepStarting("搜索1", StepType.RESEARCH);
+                        listener.onStepCompleted("搜索1", "结果1");
+                    } catch (Exception e) { throw new RuntimeException(e); }
+                });
+                executor.submit(() -> {
+                    try {
+                        barrier.await();
+                        listener.onStepStarting("搜索2", StepType.RESEARCH);
+                        listener.onStepCompleted("搜索2", "结果2");
+                    } catch (Exception e) { throw new RuntimeException(e); }
+                });
+            }
+
+            // WRITE runs after both RESEARCH complete (sequential)
+            listener.onStepStarting("撰写", StepType.WRITE);
+            listener.onStepCompleted("撰写", "报告");
+            return null;
+        }).when(graphOrchestrator).executeSteps(any(), any(), any());
+
+        useCase.execute(taskId);
+
+        // All 4 steps completed, execution succeeded
+        assertThat(task.status()).isEqualTo(TaskStatus.COMPLETED);
+
+        var eventTypes = publishedEvents.stream()
+                .map(e -> e.getClass().getSimpleName())
+                .toList();
+        assertThat(eventTypes.getFirst()).isEqualTo("ExecutionStarted");
+        assertThat(eventTypes.getLast()).isEqualTo("ExecutionCompleted");
+        assertThat(eventTypes.stream().filter(t -> t.equals("StepStarted")).count()).isEqualTo(4);
+        assertThat(eventTypes.stream().filter(t -> t.equals("StepCompleted")).count()).isEqualTo(4);
+
+        verify(executionRepository, atLeast(4)).save(any(Execution.class));
     }
 }

@@ -16,8 +16,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 /**
@@ -192,6 +191,407 @@ class GraphOrchestratorTest {
             assertThat(GraphOrchestrator.nodeId(0)).isEqualTo("step_1");
             assertThat(GraphOrchestrator.nodeId(1)).isEqualTo("step_2");
             assertThat(GraphOrchestrator.nodeId(9)).isEqualTo("step_10");
+        }
+
+        @Test
+        void skip_node_has_fixed_id() {
+            assertThat(GraphOrchestrator.SKIP_NODE_ID).isEqualTo("skip_research");
+        }
+    }
+
+    @Nested
+    class FindResearchRange {
+
+        @Test
+        void detects_think_followed_by_research() {
+            var steps = List.of(
+                    new TaskPlannerPort.PlannedStep("分析", StepType.THINK),
+                    new TaskPlannerPort.PlannedStep("搜索", StepType.RESEARCH),
+                    new TaskPlannerPort.PlannedStep("撰写", StepType.WRITE));
+
+            var range = orchestrator.findResearchRange(steps);
+
+            assertThat(range).isNotNull();
+            assertThat(range[0]).isEqualTo(0); // thinkIndex
+            assertThat(range[1]).isEqualTo(1); // researchStart
+            assertThat(range[2]).isEqualTo(1); // researchEnd
+        }
+
+        @Test
+        void detects_consecutive_research_steps() {
+            var steps = List.of(
+                    new TaskPlannerPort.PlannedStep("分析", StepType.THINK),
+                    new TaskPlannerPort.PlannedStep("搜索1", StepType.RESEARCH),
+                    new TaskPlannerPort.PlannedStep("搜索2", StepType.RESEARCH),
+                    new TaskPlannerPort.PlannedStep("撰写", StepType.WRITE));
+
+            var range = orchestrator.findResearchRange(steps);
+
+            assertThat(range).isNotNull();
+            assertThat(range[0]).isEqualTo(0);
+            assertThat(range[1]).isEqualTo(1);
+            assertThat(range[2]).isEqualTo(2);
+        }
+
+        @Test
+        void returns_null_when_no_think_step() {
+            var steps = List.of(
+                    new TaskPlannerPort.PlannedStep("搜索", StepType.RESEARCH),
+                    new TaskPlannerPort.PlannedStep("撰写", StepType.WRITE));
+
+            assertThat(orchestrator.findResearchRange(steps)).isNull();
+        }
+
+        @Test
+        void returns_null_when_think_not_followed_by_research() {
+            var steps = List.of(
+                    new TaskPlannerPort.PlannedStep("分析", StepType.THINK),
+                    new TaskPlannerPort.PlannedStep("撰写", StepType.WRITE));
+
+            assertThat(orchestrator.findResearchRange(steps)).isNull();
+        }
+
+        @Test
+        void returns_null_when_think_is_last_step() {
+            var steps = List.of(
+                    new TaskPlannerPort.PlannedStep("分析", StepType.THINK));
+
+            assertThat(orchestrator.findResearchRange(steps)).isNull();
+        }
+    }
+
+    @Nested
+    class ConditionalRouting {
+
+        private static final String THINK_OUTPUT_SKIP =
+                "Analysis complete.\n\n[ROUTING]\nneeds_research: NO\nreason: Simple task";
+        private static final String THINK_OUTPUT_RUN =
+                "Analysis complete.\n\n[ROUTING]\nneeds_research: YES\nreason: Need data";
+        private static final String THINK_OUTPUT_NO_HINT =
+                "Plain analysis without any routing hint";
+
+        @Test
+        void skips_research_when_think_says_no() {
+            var steps = List.of(
+                    new TaskPlannerPort.PlannedStep("分析", StepType.THINK),
+                    new TaskPlannerPort.PlannedStep("搜索", StepType.RESEARCH),
+                    new TaskPlannerPort.PlannedStep("撰写", StepType.WRITE));
+
+            when(stepExecutor.execute(argThat(ctx ->
+                    ctx != null && ctx.stepType() == StepType.THINK)))
+                    .thenReturn(new StepOutput(THINK_OUTPUT_SKIP));
+            when(stepExecutor.execute(argThat(ctx ->
+                    ctx != null && ctx.stepType() == StepType.WRITE)))
+                    .thenReturn(new StepOutput("报告"));
+
+            orchestrator.executeSteps("简单任务", steps, listener);
+
+            // THINK executes, RESEARCH skipped, WRITE executes
+            InOrder inOrder = inOrder(listener, stepExecutor);
+            inOrder.verify(listener).onStepStarting("分析", StepType.THINK);
+            inOrder.verify(stepExecutor).execute(argThat(ctx ->
+                    ctx != null && ctx.stepType() == StepType.THINK));
+            inOrder.verify(listener).onStepCompleted("分析", THINK_OUTPUT_SKIP);
+            inOrder.verify(listener).onStepStarting("搜索", StepType.RESEARCH);
+            inOrder.verify(listener).onStepSkipped(eq("搜索"), anyString());
+            inOrder.verify(listener).onStepStarting("撰写", StepType.WRITE);
+            inOrder.verify(stepExecutor).execute(argThat(ctx ->
+                    ctx != null && ctx.stepType() == StepType.WRITE));
+            inOrder.verify(listener).onStepCompleted("撰写", "报告");
+
+            // RESEARCH executor never called
+            verify(stepExecutor, never()).execute(argThat(ctx ->
+                    ctx != null && ctx.stepType() == StepType.RESEARCH));
+        }
+
+        @Test
+        void runs_research_when_think_says_yes() {
+            var steps = List.of(
+                    new TaskPlannerPort.PlannedStep("分析", StepType.THINK),
+                    new TaskPlannerPort.PlannedStep("搜索", StepType.RESEARCH),
+                    new TaskPlannerPort.PlannedStep("撰写", StepType.WRITE));
+
+            when(stepExecutor.execute(argThat(ctx ->
+                    ctx != null && ctx.stepType() == StepType.THINK)))
+                    .thenReturn(new StepOutput(THINK_OUTPUT_RUN));
+            when(stepExecutor.execute(argThat(ctx ->
+                    ctx != null && ctx.stepType() == StepType.RESEARCH)))
+                    .thenReturn(new StepOutput("搜索结果"));
+            when(stepExecutor.execute(argThat(ctx ->
+                    ctx != null && ctx.stepType() == StepType.WRITE)))
+                    .thenReturn(new StepOutput("报告"));
+
+            orchestrator.executeSteps("复杂任务", steps, listener);
+
+            // All steps execute normally
+            verify(stepExecutor, times(3)).execute(any());
+            verify(listener).onStepCompleted("分析", THINK_OUTPUT_RUN);
+            verify(listener).onStepCompleted("搜索", "搜索结果");
+            verify(listener).onStepCompleted("撰写", "报告");
+            verify(listener, never()).onStepSkipped(any(), any());
+        }
+
+        @Test
+        void runs_research_when_no_routing_hint() {
+            var steps = List.of(
+                    new TaskPlannerPort.PlannedStep("分析", StepType.THINK),
+                    new TaskPlannerPort.PlannedStep("搜索", StepType.RESEARCH),
+                    new TaskPlannerPort.PlannedStep("撰写", StepType.WRITE));
+
+            when(stepExecutor.execute(argThat(ctx ->
+                    ctx != null && ctx.stepType() == StepType.THINK)))
+                    .thenReturn(new StepOutput(THINK_OUTPUT_NO_HINT));
+            when(stepExecutor.execute(argThat(ctx ->
+                    ctx != null && ctx.stepType() == StepType.RESEARCH)))
+                    .thenReturn(new StepOutput("搜索结果"));
+            when(stepExecutor.execute(argThat(ctx ->
+                    ctx != null && ctx.stepType() == StepType.WRITE)))
+                    .thenReturn(new StepOutput("报告"));
+
+            orchestrator.executeSteps("任务", steps, listener);
+
+            // Safe default: all steps execute (including RESEARCH)
+            verify(stepExecutor, times(3)).execute(any());
+            verify(listener, never()).onStepSkipped(any(), any());
+        }
+
+        @Test
+        void skips_consecutive_research_steps() {
+            var steps = List.of(
+                    new TaskPlannerPort.PlannedStep("分析", StepType.THINK),
+                    new TaskPlannerPort.PlannedStep("搜索1", StepType.RESEARCH),
+                    new TaskPlannerPort.PlannedStep("搜索2", StepType.RESEARCH),
+                    new TaskPlannerPort.PlannedStep("撰写", StepType.WRITE));
+
+            when(stepExecutor.execute(argThat(ctx ->
+                    ctx != null && ctx.stepType() == StepType.THINK)))
+                    .thenReturn(new StepOutput(THINK_OUTPUT_SKIP));
+            when(stepExecutor.execute(argThat(ctx ->
+                    ctx != null && ctx.stepType() == StepType.WRITE)))
+                    .thenReturn(new StepOutput("报告"));
+
+            orchestrator.executeSteps("简单任务", steps, listener);
+
+            // Both RESEARCH steps skipped
+            verify(listener).onStepSkipped(eq("搜索1"), anyString());
+            verify(listener).onStepSkipped(eq("搜索2"), anyString());
+            verify(listener).onStepCompleted("撰写", "报告");
+            verify(stepExecutor, never()).execute(argThat(ctx ->
+                    ctx != null && ctx.stepType() == StepType.RESEARCH));
+        }
+
+        @Test
+        void runs_consecutive_research_steps_in_parallel() {
+            var steps = List.of(
+                    new TaskPlannerPort.PlannedStep("分析", StepType.THINK),
+                    new TaskPlannerPort.PlannedStep("搜索1", StepType.RESEARCH),
+                    new TaskPlannerPort.PlannedStep("搜索2", StepType.RESEARCH),
+                    new TaskPlannerPort.PlannedStep("撰写", StepType.WRITE));
+
+            when(stepExecutor.execute(argThat(ctx ->
+                    ctx != null && ctx.stepType() == StepType.THINK)))
+                    .thenReturn(new StepOutput(THINK_OUTPUT_RUN));
+            when(stepExecutor.execute(argThat(ctx ->
+                    ctx != null && "搜索1".equals(ctx.stepName()))))
+                    .thenReturn(new StepOutput("结果1"));
+            when(stepExecutor.execute(argThat(ctx ->
+                    ctx != null && "搜索2".equals(ctx.stepName()))))
+                    .thenReturn(new StepOutput("结果2"));
+            when(stepExecutor.execute(argThat(ctx ->
+                    ctx != null && ctx.stepType() == StepType.WRITE)))
+                    .thenReturn(new StepOutput("报告"));
+
+            orchestrator.executeSteps("复杂任务", steps, listener);
+
+            // All 4 steps execute, no skips
+            verify(stepExecutor, times(4)).execute(any());
+            verify(listener, never()).onStepSkipped(any(), any());
+
+            // Both RESEARCH steps completed (order may vary)
+            verify(listener).onStepCompleted("搜索1", "结果1");
+            verify(listener).onStepCompleted("搜索2", "结果2");
+        }
+
+        @Test
+        void parallel_research_outputs_accumulated_for_write() {
+            var steps = List.of(
+                    new TaskPlannerPort.PlannedStep("分析", StepType.THINK),
+                    new TaskPlannerPort.PlannedStep("搜索1", StepType.RESEARCH),
+                    new TaskPlannerPort.PlannedStep("搜索2", StepType.RESEARCH),
+                    new TaskPlannerPort.PlannedStep("撰写", StepType.WRITE));
+
+            when(stepExecutor.execute(argThat(ctx ->
+                    ctx != null && ctx.stepType() == StepType.THINK)))
+                    .thenReturn(new StepOutput(THINK_OUTPUT_RUN));
+            when(stepExecutor.execute(argThat(ctx ->
+                    ctx != null && "搜索1".equals(ctx.stepName()))))
+                    .thenReturn(new StepOutput("结果1"));
+            when(stepExecutor.execute(argThat(ctx ->
+                    ctx != null && "搜索2".equals(ctx.stepName()))))
+                    .thenReturn(new StepOutput("结果2"));
+            when(stepExecutor.execute(argThat(ctx ->
+                    ctx != null && ctx.stepType() == StepType.WRITE)))
+                    .thenReturn(new StepOutput("报告"));
+
+            orchestrator.executeSteps("复杂任务", steps, listener);
+
+            // Verify WRITE receives THINK + both RESEARCH outputs (order may vary)
+            var captor = ArgumentCaptor.forClass(StepExecutionContext.class);
+            verify(stepExecutor, times(4)).execute(captor.capture());
+            var writeContext = captor.getAllValues().stream()
+                    .filter(ctx -> ctx.stepType() == StepType.WRITE)
+                    .findFirst().orElseThrow();
+
+            assertThat(writeContext.previousOutputs())
+                    .contains(THINK_OUTPUT_RUN)
+                    .containsAll(List.of("结果1", "结果2"))
+                    .hasSize(3);
+        }
+
+        @Test
+        void parallel_research_each_receives_only_think_output() {
+            var steps = List.of(
+                    new TaskPlannerPort.PlannedStep("分析", StepType.THINK),
+                    new TaskPlannerPort.PlannedStep("搜索1", StepType.RESEARCH),
+                    new TaskPlannerPort.PlannedStep("搜索2", StepType.RESEARCH),
+                    new TaskPlannerPort.PlannedStep("撰写", StepType.WRITE));
+
+            when(stepExecutor.execute(argThat(ctx ->
+                    ctx != null && ctx.stepType() == StepType.THINK)))
+                    .thenReturn(new StepOutput(THINK_OUTPUT_RUN));
+            when(stepExecutor.execute(argThat(ctx ->
+                    ctx != null && ctx.stepType() == StepType.RESEARCH)))
+                    .thenReturn(new StepOutput("搜索结果"));
+            when(stepExecutor.execute(argThat(ctx ->
+                    ctx != null && ctx.stepType() == StepType.WRITE)))
+                    .thenReturn(new StepOutput("报告"));
+
+            orchestrator.executeSteps("任务", steps, listener);
+
+            // Parallel RESEARCH steps each see only THINK output (not each other's)
+            var captor = ArgumentCaptor.forClass(StepExecutionContext.class);
+            verify(stepExecutor, times(4)).execute(captor.capture());
+            var researchContexts = captor.getAllValues().stream()
+                    .filter(ctx -> ctx.stepType() == StepType.RESEARCH)
+                    .toList();
+
+            for (var ctx : researchContexts) {
+                assertThat(ctx.previousOutputs()).containsExactly(THINK_OUTPUT_RUN);
+            }
+        }
+
+        @Test
+        void parallel_research_one_degrades_others_complete() {
+            var steps = List.of(
+                    new TaskPlannerPort.PlannedStep("分析", StepType.THINK),
+                    new TaskPlannerPort.PlannedStep("搜索1", StepType.RESEARCH),
+                    new TaskPlannerPort.PlannedStep("搜索2", StepType.RESEARCH),
+                    new TaskPlannerPort.PlannedStep("撰写", StepType.WRITE));
+
+            when(stepExecutor.execute(argThat(ctx ->
+                    ctx != null && ctx.stepType() == StepType.THINK)))
+                    .thenReturn(new StepOutput(THINK_OUTPUT_RUN));
+            when(stepExecutor.execute(argThat(ctx ->
+                    ctx != null && "搜索1".equals(ctx.stepName()))))
+                    .thenThrow(new StepExecutionException("LLM timeout"));
+            when(stepExecutor.execute(argThat(ctx ->
+                    ctx != null && "搜索2".equals(ctx.stepName()))))
+                    .thenReturn(new StepOutput("结果2"));
+            when(stepExecutor.execute(argThat(ctx ->
+                    ctx != null && ctx.stepType() == StepType.WRITE)))
+                    .thenReturn(new StepOutput("报告"));
+
+            orchestrator.executeSteps("任务", steps, listener);
+
+            // 搜索1 degraded (skipped), 搜索2 completed, WRITE continues
+            verify(listener).onStepSkipped("搜索1", "LLM timeout");
+            verify(listener).onStepCompleted("搜索2", "结果2");
+            verify(listener).onStepCompleted("撰写", "报告");
+
+            // WRITE receives THINK + only 搜索2 output (搜索1 skipped, no output)
+            var captor = ArgumentCaptor.forClass(StepExecutionContext.class);
+            verify(stepExecutor, times(4)).execute(captor.capture());
+            var writeContext = captor.getAllValues().stream()
+                    .filter(ctx -> ctx.stepType() == StepType.WRITE)
+                    .findFirst().orElseThrow();
+            assertThat(writeContext.previousOutputs())
+                    .contains(THINK_OUTPUT_RUN, "结果2")
+                    .hasSize(2);
+        }
+
+        @Test
+        void linear_chain_for_no_think_research_pattern() {
+            var steps = List.of(
+                    new TaskPlannerPort.PlannedStep("搜索", StepType.RESEARCH),
+                    new TaskPlannerPort.PlannedStep("撰写", StepType.WRITE),
+                    new TaskPlannerPort.PlannedStep("通知", StepType.NOTIFY));
+
+            when(stepExecutor.execute(any())).thenReturn(new StepOutput("output"));
+
+            orchestrator.executeSteps("任务", steps, listener);
+
+            // All executed linearly
+            verify(stepExecutor, times(3)).execute(any());
+            verify(listener, never()).onStepSkipped(any(), any());
+        }
+
+        @Test
+        void linear_chain_when_think_not_followed_by_research() {
+            var steps = List.of(
+                    new TaskPlannerPort.PlannedStep("分析", StepType.THINK),
+                    new TaskPlannerPort.PlannedStep("撰写", StepType.WRITE),
+                    new TaskPlannerPort.PlannedStep("通知", StepType.NOTIFY));
+
+            when(stepExecutor.execute(any())).thenReturn(new StepOutput("output"));
+
+            orchestrator.executeSteps("任务", steps, listener);
+
+            verify(stepExecutor, times(3)).execute(any());
+            verify(listener, never()).onStepSkipped(any(), any());
+        }
+
+        @Test
+        void skip_preserves_output_accumulation() {
+            var steps = List.of(
+                    new TaskPlannerPort.PlannedStep("分析", StepType.THINK),
+                    new TaskPlannerPort.PlannedStep("搜索", StepType.RESEARCH),
+                    new TaskPlannerPort.PlannedStep("撰写", StepType.WRITE));
+
+            when(stepExecutor.execute(argThat(ctx ->
+                    ctx != null && ctx.stepType() == StepType.THINK)))
+                    .thenReturn(new StepOutput(THINK_OUTPUT_SKIP));
+            when(stepExecutor.execute(argThat(ctx ->
+                    ctx != null && ctx.stepType() == StepType.WRITE)))
+                    .thenReturn(new StepOutput("报告"));
+
+            orchestrator.executeSteps("任务", steps, listener);
+
+            // WRITE should only have THINK output (RESEARCH was skipped, no output)
+            var captor = ArgumentCaptor.forClass(StepExecutionContext.class);
+            verify(stepExecutor, times(2)).execute(captor.capture());
+            var contexts = captor.getAllValues();
+
+            // THINK has no previous outputs
+            assertThat(contexts.get(0).previousOutputs()).isEmpty();
+            // WRITE has only THINK output
+            assertThat(contexts.get(1).previousOutputs()).containsExactly(THINK_OUTPUT_SKIP);
+        }
+
+        @Test
+        void skipped_research_at_end_of_plan() {
+            var steps = List.of(
+                    new TaskPlannerPort.PlannedStep("分析", StepType.THINK),
+                    new TaskPlannerPort.PlannedStep("搜索", StepType.RESEARCH));
+
+            when(stepExecutor.execute(argThat(ctx ->
+                    ctx != null && ctx.stepType() == StepType.THINK)))
+                    .thenReturn(new StepOutput(THINK_OUTPUT_SKIP));
+
+            orchestrator.executeSteps("简单任务", steps, listener);
+
+            verify(listener).onStepCompleted("分析", THINK_OUTPUT_SKIP);
+            verify(listener).onStepSkipped(eq("搜索"), anyString());
+            verify(stepExecutor, times(1)).execute(any());
         }
     }
 }

@@ -246,6 +246,40 @@ class ExecutionTest {
                 .isInstanceOf(IllegalExecutionStateException.class);
     }
 
+    // --- startStepByName ---
+
+    @Test
+    void startStepByName_starts_specific_step() {
+        var exec = aRunningExecutionWithThreeSteps();
+        var step = exec.startStepByName("搜索");
+        assertThat(step.status()).isEqualTo(StepStatus.RUNNING);
+        assertThat(step.name()).isEqualTo("搜索");
+    }
+
+    @Test
+    void startStepByName_throws_when_not_found() {
+        var exec = aRunningExecution();
+        assertThatThrownBy(() -> exec.startStepByName("不存在"))
+                .isInstanceOf(IllegalExecutionStateException.class);
+    }
+
+    @Test
+    void startStepByName_throws_when_step_not_pending() {
+        var exec = aRunningExecution();
+        exec.startStepByName("调研"); // now RUNNING
+        assertThatThrownBy(() -> exec.startStepByName("调研"))
+                .isInstanceOf(IllegalExecutionStateException.class);
+    }
+
+    @Test
+    void startStepByName_allows_parallel_starts() {
+        var exec = aRunningExecutionWithThreeSteps();
+        var step1 = exec.startStepByName("搜索");
+        var step2 = exec.startStepByName("写报告");
+        assertThat(step1.status()).isEqualTo(StepStatus.RUNNING);
+        assertThat(step2.status()).isEqualTo(StepStatus.RUNNING);
+    }
+
     // --- Helpers ---
 
     private Execution aPlanningExecution() {
@@ -262,6 +296,15 @@ class ExecutionTest {
     private Execution aRunningExecutionWithTwoSteps() {
         var exec = aPlanningExecution();
         exec.addStep(StepId.generate(), "调研", StepType.RESEARCH, NOW);
+        exec.addStep(StepId.generate(), "写报告", StepType.WRITE, NOW);
+        exec.startRunning();
+        return exec;
+    }
+
+    private Execution aRunningExecutionWithThreeSteps() {
+        var exec = aPlanningExecution();
+        exec.addStep(StepId.generate(), "分析", StepType.THINK, NOW);
+        exec.addStep(StepId.generate(), "搜索", StepType.RESEARCH, NOW);
         exec.addStep(StepId.generate(), "写报告", StepType.WRITE, NOW);
         exec.startRunning();
         return exec;
