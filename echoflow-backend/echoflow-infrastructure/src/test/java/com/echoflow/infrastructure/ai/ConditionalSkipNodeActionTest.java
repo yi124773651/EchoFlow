@@ -3,6 +3,7 @@ package com.echoflow.infrastructure.ai;
 import com.alibaba.cloud.ai.graph.KeyStrategy;
 import com.alibaba.cloud.ai.graph.OverAllState;
 import com.echoflow.application.execution.GraphOrchestrationPort.StepProgressListener;
+import com.echoflow.application.execution.TaskPlannerPort;
 import com.echoflow.domain.execution.StepType;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -10,6 +11,7 @@ import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -30,9 +32,10 @@ class ConditionalSkipNodeActionTest {
     }
 
     @Test
-    void calls_starting_then_skipped_on_listener() throws Exception {
+    void calls_starting_then_skipped_for_single_step() throws Exception {
         var action = new ConditionalSkipNodeAction(
-                "搜索资料", StepType.RESEARCH, listener, "THINK determined research not needed");
+                List.of(new TaskPlannerPort.PlannedStep("搜索资料", StepType.RESEARCH)),
+                listener, "THINK determined research not needed");
 
         action.apply(emptyState()).get();
 
@@ -42,9 +45,27 @@ class ConditionalSkipNodeActionTest {
     }
 
     @Test
+    void skips_multiple_steps_in_order() throws Exception {
+        var action = new ConditionalSkipNodeAction(
+                List.of(
+                        new TaskPlannerPort.PlannedStep("搜索1", StepType.RESEARCH),
+                        new TaskPlannerPort.PlannedStep("搜索2", StepType.RESEARCH)),
+                listener, "skip reason");
+
+        action.apply(emptyState()).get();
+
+        InOrder inOrder = inOrder(listener);
+        inOrder.verify(listener).onStepStarting("搜索1", StepType.RESEARCH);
+        inOrder.verify(listener).onStepSkipped("搜索1", "skip reason");
+        inOrder.verify(listener).onStepStarting("搜索2", StepType.RESEARCH);
+        inOrder.verify(listener).onStepSkipped("搜索2", "skip reason");
+    }
+
+    @Test
     void returns_empty_map() throws Exception {
         var action = new ConditionalSkipNodeAction(
-                "搜索", StepType.RESEARCH, listener, "skip reason");
+                List.of(new TaskPlannerPort.PlannedStep("搜索", StepType.RESEARCH)),
+                listener, "skip reason");
 
         var result = action.apply(emptyState()).get();
 
@@ -54,22 +75,12 @@ class ConditionalSkipNodeActionTest {
     @Test
     void never_calls_completed_or_failed() throws Exception {
         var action = new ConditionalSkipNodeAction(
-                "搜索", StepType.RESEARCH, listener, "skip reason");
+                List.of(new TaskPlannerPort.PlannedStep("搜索", StepType.RESEARCH)),
+                listener, "skip reason");
 
         action.apply(emptyState()).get();
 
         verify(listener, never()).onStepCompleted(any(), any());
         verify(listener, never()).onStepFailed(any(), any());
-    }
-
-    @Test
-    void passes_correct_step_info_to_listener() throws Exception {
-        var action = new ConditionalSkipNodeAction(
-                "深度调研", StepType.RESEARCH, listener, "不需要调研");
-
-        action.apply(emptyState()).get();
-
-        verify(listener).onStepStarting("深度调研", StepType.RESEARCH);
-        verify(listener).onStepSkipped("深度调研", "不需要调研");
     }
 }

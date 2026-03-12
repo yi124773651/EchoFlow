@@ -3,7 +3,7 @@ package com.echoflow.infrastructure.ai;
 import com.alibaba.cloud.ai.graph.CompileConfig;
 import com.alibaba.cloud.ai.graph.KeyStrategy;
 import com.alibaba.cloud.ai.graph.StateGraph;
-import com.alibaba.cloud.ai.graph.action.AsyncEdgeAction;
+import com.alibaba.cloud.ai.graph.action.AsyncMultiCommandAction;
 import com.alibaba.cloud.ai.graph.checkpoint.config.SaverConfig;
 import com.alibaba.cloud.ai.graph.checkpoint.savers.MemorySaver;
 import com.alibaba.cloud.ai.graph.exception.GraphStateException;
@@ -15,6 +15,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -24,7 +25,8 @@ import java.util.Map;
  * <p>Builds a StateGraph that executes planned steps. When the step list
  * contains a THINK step followed by RESEARCH step(s), conditional routing
  * is applied: the THINK output's routing hint determines whether RESEARCH
- * is executed or skipped. Otherwise, a simple linear chain is built.</p>
+ * steps are executed in parallel or skipped. Otherwise, a simple linear chain
+ * is built.</p>
  *
  * <p>State is passed between nodes via {@code OverAllState}:
  * <ul>
@@ -42,6 +44,8 @@ public class GraphOrchestrator implements GraphOrchestrationPort {
 
     private static final String CONDITIONAL_SKIP_REASON =
             "Conditionally skipped: THINK analysis determined research is not needed";
+
+    static final String SKIP_NODE_ID = "skip_research";
 
     private final StepExecutorPort stepExecutor;
 
@@ -105,10 +109,17 @@ public class GraphOrchestrator implements GraphOrchestrationPort {
 
     /**
      * Build a graph with conditional routing after THINK node.
+     * When research is needed, RESEARCH steps fan out in parallel and fan in at the
+     * convergence point (first post-RESEARCH node). When skipped, a single aggregated
+     * skip node fires listener callbacks for all RESEARCH steps instantly.
+     *
+     * <p>All routeMap value nodes must have outgoing edges to the same convergence
+     * point, as required by {@code ConditionalParallelNode.findParallelNodeTargets}.</p>
      *
      * <pre>
-     * START → ... → think ─[conditional]─→ research → ... → write → ... → END
-     *                          └──→ skip_research → ... → write → ... → END
+     * START → ... → think ─[parallelConditional]─→ R1 ──────────┐
+     *                                              R2 ──────────┤─→ write → ... → END
+     *                          └──→ skip_research ──────────────┘
      * </pre>
      */
     private StateGraph buildConditionalGraph(StateGraph graph,
@@ -119,20 +130,18 @@ public class GraphOrchestrator implements GraphOrchestrationPort {
         int researchStart = researchRange[1];
         int researchEnd = researchRange[2];
 
-        log.info("Conditional routing detected: THINK at index {}, RESEARCH range [{}, {}]",
-                thinkIndex, researchStart, researchEnd);
+        log.info("Parallel conditional routing: THINK at index {}, RESEARCH range [{}, {}] ({} parallel nodes)",
+                thinkIndex, researchStart, researchEnd, researchEnd - researchStart + 1);
 
         // 1. Add all regular step nodes
         for (int i = 0; i < steps.size(); i++) {
             graph.addNode(nodeId(i), new StepNodeAction(steps.get(i), stepExecutor, listener));
         }
 
-        // 2. Add skip nodes for each RESEARCH step in the range
-        for (int i = researchStart; i <= researchEnd; i++) {
-            var step = steps.get(i);
-            graph.addNode(skipNodeId(i),
-                    new ConditionalSkipNodeAction(step.name(), step.type(), listener, CONDITIONAL_SKIP_REASON));
-        }
+        // 2. Add single aggregated skip node for all RESEARCH steps
+        var researchSteps = steps.subList(researchStart, researchEnd + 1);
+        graph.addNode(SKIP_NODE_ID,
+                new ConditionalSkipNodeAction(researchSteps, listener, CONDITIONAL_SKIP_REASON));
 
         // 3. Wire edges: START → ... → THINK (linear prefix)
         graph.addEdge(StateGraph.START, nodeId(0));
@@ -140,40 +149,36 @@ public class GraphOrchestrator implements GraphOrchestrationPort {
             graph.addEdge(nodeId(i), nodeId(i + 1));
         }
 
-        // 4. Conditional edge from THINK node
-        graph.addConditionalEdges(nodeId(thinkIndex),
-                AsyncEdgeAction.edge_async(new ResearchDecisionRouter()),
-                Map.of(
-                        ResearchDecisionRouter.ROUTE_RUN, nodeId(researchStart),
-                        ResearchDecisionRouter.ROUTE_SKIP, skipNodeId(researchStart)
-                ));
-
-        // 5. RUN path: chain RESEARCH nodes linearly
-        for (int i = researchStart; i < researchEnd; i++) {
-            graph.addEdge(nodeId(i), nodeId(i + 1));
+        // 4. Parallel conditional edge from THINK node
+        var router = new ParallelResearchRouter(researchStart, researchEnd);
+        var routeMap = new HashMap<String, String>();
+        for (int i = researchStart; i <= researchEnd; i++) {
+            routeMap.put(ParallelResearchRouter.runRouteKey(i), nodeId(i));
         }
+        routeMap.put(ParallelResearchRouter.ROUTE_SKIP, SKIP_NODE_ID);
 
-        // 6. SKIP path: chain skip nodes linearly
-        for (int i = researchStart; i < researchEnd; i++) {
-            graph.addEdge(skipNodeId(i), skipNodeId(i + 1));
-        }
+        graph.addParallelConditionalEdges(nodeId(thinkIndex),
+                AsyncMultiCommandAction.node_async(router),
+                routeMap);
 
-        // 7. Both paths converge
+        // 5. All routeMap value nodes converge to the same target
         int convergeIndex = researchEnd + 1;
-        if (convergeIndex < steps.size()) {
-            // Converge at the first post-RESEARCH node
-            graph.addEdge(nodeId(researchEnd), nodeId(convergeIndex));
-            graph.addEdge(skipNodeId(researchEnd), nodeId(convergeIndex));
+        String convergeTarget = convergeIndex < steps.size() ? nodeId(convergeIndex) : StateGraph.END;
 
-            // 8. Linear suffix from convergence point to END
+        // RUN path: each RESEARCH node fans in to convergence point
+        for (int i = researchStart; i <= researchEnd; i++) {
+            graph.addEdge(nodeId(i), convergeTarget);
+        }
+
+        // SKIP path: single skip node goes to same convergence point
+        graph.addEdge(SKIP_NODE_ID, convergeTarget);
+
+        // 6. Linear suffix from convergence point to END
+        if (convergeIndex < steps.size()) {
             for (int i = convergeIndex; i < steps.size() - 1; i++) {
                 graph.addEdge(nodeId(i), nodeId(i + 1));
             }
             graph.addEdge(nodeId(steps.size() - 1), StateGraph.END);
-        } else {
-            // RESEARCH is at the end — both paths go directly to END
-            graph.addEdge(nodeId(researchEnd), StateGraph.END);
-            graph.addEdge(skipNodeId(researchEnd), StateGraph.END);
         }
 
         return graph;
@@ -225,9 +230,5 @@ public class GraphOrchestrator implements GraphOrchestrationPort {
 
     static String nodeId(int index) {
         return "step_" + (index + 1);
-    }
-
-    static String skipNodeId(int index) {
-        return "skip_step_" + (index + 1);
     }
 }

@@ -138,6 +138,21 @@ public class Execution {
     }
 
     /**
+     * Start a specific step by name. Used for parallel execution where
+     * multiple steps may start concurrently.
+     */
+    public ExecutionStep startStepByName(String name) {
+        requireRunning();
+        var step = steps.stream()
+                .filter(s -> s.name().equals(name))
+                .findFirst()
+                .orElseThrow(() -> new IllegalExecutionStateException(
+                        "Step '" + name + "' not found in execution " + id));
+        step.markRunning();
+        return step;
+    }
+
+    /**
      * Check if there are remaining pending steps.
      */
     public boolean hasPendingSteps() {

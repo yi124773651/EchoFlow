@@ -14,9 +14,15 @@ import java.time.Instant;
  * Use case: execute a submitted task through a pipeline of steps.
  *
  * <p>Steps are planned by an LLM via {@link TaskPlannerPort}, then executed
- * sequentially via {@link GraphOrchestrationPort} (StateGraph-driven linear chain).
- * The {@link GraphOrchestrationPort.StepProgressListener} callback ensures domain
- * model updates and SSE events happen at the same timing as the original while-loop.</p>
+ * via {@link GraphOrchestrationPort} (StateGraph-driven chain with optional
+ * parallel fan-out for RESEARCH steps). The
+ * {@link GraphOrchestrationPort.StepProgressListener} callback ensures domain
+ * model updates and SSE events happen at each step boundary.</p>
+ *
+ * <p>When RESEARCH steps execute in parallel, multiple callbacks may fire
+ * concurrently from different threads. All callback methods synchronize on
+ * the {@code execution} aggregate to serialize domain model mutations and
+ * database saves.</p>
  *
  * <p>Transaction boundaries are managed programmatically via {@link TransactionOperations}
  * to ensure LLM/remote calls never execute inside a database transaction (Rule 4).</p>
@@ -103,15 +109,15 @@ public class ExecuteTaskUseCase {
     }
 
     /**
-     * Phase 2: Execute each step via StateGraph linear chain.
+     * Phase 2: Execute steps via StateGraph (linear or parallel fan-out).
      *
      * <p>Delegates to {@link GraphOrchestrationPort} which drives execution via
      * StateGraph. The {@link GraphOrchestrationPort.StepProgressListener} callback
-     * performs domain model updates and event publishing at each step boundary,
-     * preserving the same timing as the original while-loop.</p>
+     * performs domain model updates and event publishing at each step boundary.</p>
      *
-     * <p>OverAllState automatically accumulates step outputs (APPEND strategy),
-     * replacing the manual {@code previousOutputs} list.</p>
+     * <p>When RESEARCH steps run in parallel, callbacks fire from multiple threads.
+     * All callback bodies synchronize on {@code execution} to serialize domain
+     * model mutations and database saves, preventing race conditions.</p>
      */
     private void runExecution(Execution execution) {
         var task = taskRepository.findById(execution.taskId())
@@ -123,45 +129,49 @@ public class ExecuteTaskUseCase {
                 .map(s -> new TaskPlannerPort.PlannedStep(s.name(), s.type()))
                 .toList();
 
-        // Mutable holder for the current running step (used across callbacks)
-        var currentStep = new ExecutionStep[1];
-
         try {
             graphOrchestrator.executeSteps(taskDescription, plannedSteps,
                     new GraphOrchestrationPort.StepProgressListener() {
 
                         @Override
                         public void onStepStarting(String stepName, StepType stepType) {
-                            var step = execution.startNextStep();
-                            currentStep[0] = step;
-                            eventPublisher.publish(new ExecutionEvent.StepStarted(
-                                    execution.id(), step.id(), step.name(), clock.instant()));
-                            appendLog(execution, step.id(), LogType.ACTION,
-                                    "Executing: " + step.name(), clock.instant());
+                            synchronized (execution) {
+                                var step = execution.startStepByName(stepName);
+                                eventPublisher.publish(new ExecutionEvent.StepStarted(
+                                        execution.id(), step.id(), step.name(), clock.instant()));
+                                appendLog(execution, step.id(), LogType.ACTION,
+                                        "Executing: " + step.name(), clock.instant());
+                            }
                         }
 
                         @Override
                         public void onStepCompleted(String stepName, String output) {
-                            var step = currentStep[0];
-                            appendLog(execution, step.id(), LogType.OBSERVATION,
-                                    output, clock.instant());
-                            completeStep(execution, step.id(), output);
+                            synchronized (execution) {
+                                var step = findStepByName(execution, stepName);
+                                appendLog(execution, step.id(), LogType.OBSERVATION,
+                                        output, clock.instant());
+                                completeStep(execution, step.id(), output);
+                            }
                         }
 
                         @Override
                         public void onStepSkipped(String stepName, String reason) {
-                            var step = currentStep[0];
-                            appendLog(execution, step.id(), LogType.ERROR,
-                                    "Step degraded: " + reason, clock.instant());
-                            skipStep(execution, step.id(), reason);
+                            synchronized (execution) {
+                                var step = findStepByName(execution, stepName);
+                                appendLog(execution, step.id(), LogType.ERROR,
+                                        "Step degraded: " + reason, clock.instant());
+                                skipStep(execution, step.id(), reason);
+                            }
                         }
 
                         @Override
                         public void onStepFailed(String stepName, String reason) {
-                            var step = currentStep[0];
-                            appendLog(execution, step.id(), LogType.ERROR,
-                                    reason, clock.instant());
-                            failStep(execution, step.id(), reason);
+                            synchronized (execution) {
+                                var step = findStepByName(execution, stepName);
+                                appendLog(execution, step.id(), LogType.ERROR,
+                                        reason, clock.instant());
+                                failStep(execution, step.id(), reason);
+                            }
                         }
                     });
 
@@ -169,6 +179,14 @@ public class ExecuteTaskUseCase {
         } catch (Exception e) {
             failExecution(execution, e.getMessage());
         }
+    }
+
+    private ExecutionStep findStepByName(Execution execution, String stepName) {
+        return execution.steps().stream()
+                .filter(s -> s.name().equals(stepName))
+                .findFirst()
+                .orElseThrow(() -> new IllegalStateException(
+                        "Step '" + stepName + "' not found in execution " + execution.id()));
     }
 
     private void appendLog(Execution execution, StepId stepId, LogType type, String content, Instant now) {

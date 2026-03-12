@@ -194,9 +194,8 @@ class GraphOrchestratorTest {
         }
 
         @Test
-        void generates_skip_node_ids() {
-            assertThat(GraphOrchestrator.skipNodeId(1)).isEqualTo("skip_step_2");
-            assertThat(GraphOrchestrator.skipNodeId(2)).isEqualTo("skip_step_3");
+        void skip_node_has_fixed_id() {
+            assertThat(GraphOrchestrator.SKIP_NODE_ID).isEqualTo("skip_research");
         }
     }
 
@@ -382,7 +381,7 @@ class GraphOrchestratorTest {
         }
 
         @Test
-        void runs_consecutive_research_steps() {
+        void runs_consecutive_research_steps_in_parallel() {
             var steps = List.of(
                     new TaskPlannerPort.PlannedStep("分析", StepType.THINK),
                     new TaskPlannerPort.PlannedStep("搜索1", StepType.RESEARCH),
@@ -404,8 +403,120 @@ class GraphOrchestratorTest {
 
             orchestrator.executeSteps("复杂任务", steps, listener);
 
+            // All 4 steps execute, no skips
             verify(stepExecutor, times(4)).execute(any());
             verify(listener, never()).onStepSkipped(any(), any());
+
+            // Both RESEARCH steps completed (order may vary)
+            verify(listener).onStepCompleted("搜索1", "结果1");
+            verify(listener).onStepCompleted("搜索2", "结果2");
+        }
+
+        @Test
+        void parallel_research_outputs_accumulated_for_write() {
+            var steps = List.of(
+                    new TaskPlannerPort.PlannedStep("分析", StepType.THINK),
+                    new TaskPlannerPort.PlannedStep("搜索1", StepType.RESEARCH),
+                    new TaskPlannerPort.PlannedStep("搜索2", StepType.RESEARCH),
+                    new TaskPlannerPort.PlannedStep("撰写", StepType.WRITE));
+
+            when(stepExecutor.execute(argThat(ctx ->
+                    ctx != null && ctx.stepType() == StepType.THINK)))
+                    .thenReturn(new StepOutput(THINK_OUTPUT_RUN));
+            when(stepExecutor.execute(argThat(ctx ->
+                    ctx != null && "搜索1".equals(ctx.stepName()))))
+                    .thenReturn(new StepOutput("结果1"));
+            when(stepExecutor.execute(argThat(ctx ->
+                    ctx != null && "搜索2".equals(ctx.stepName()))))
+                    .thenReturn(new StepOutput("结果2"));
+            when(stepExecutor.execute(argThat(ctx ->
+                    ctx != null && ctx.stepType() == StepType.WRITE)))
+                    .thenReturn(new StepOutput("报告"));
+
+            orchestrator.executeSteps("复杂任务", steps, listener);
+
+            // Verify WRITE receives THINK + both RESEARCH outputs (order may vary)
+            var captor = ArgumentCaptor.forClass(StepExecutionContext.class);
+            verify(stepExecutor, times(4)).execute(captor.capture());
+            var writeContext = captor.getAllValues().stream()
+                    .filter(ctx -> ctx.stepType() == StepType.WRITE)
+                    .findFirst().orElseThrow();
+
+            assertThat(writeContext.previousOutputs())
+                    .contains(THINK_OUTPUT_RUN)
+                    .containsAll(List.of("结果1", "结果2"))
+                    .hasSize(3);
+        }
+
+        @Test
+        void parallel_research_each_receives_only_think_output() {
+            var steps = List.of(
+                    new TaskPlannerPort.PlannedStep("分析", StepType.THINK),
+                    new TaskPlannerPort.PlannedStep("搜索1", StepType.RESEARCH),
+                    new TaskPlannerPort.PlannedStep("搜索2", StepType.RESEARCH),
+                    new TaskPlannerPort.PlannedStep("撰写", StepType.WRITE));
+
+            when(stepExecutor.execute(argThat(ctx ->
+                    ctx != null && ctx.stepType() == StepType.THINK)))
+                    .thenReturn(new StepOutput(THINK_OUTPUT_RUN));
+            when(stepExecutor.execute(argThat(ctx ->
+                    ctx != null && ctx.stepType() == StepType.RESEARCH)))
+                    .thenReturn(new StepOutput("搜索结果"));
+            when(stepExecutor.execute(argThat(ctx ->
+                    ctx != null && ctx.stepType() == StepType.WRITE)))
+                    .thenReturn(new StepOutput("报告"));
+
+            orchestrator.executeSteps("任务", steps, listener);
+
+            // Parallel RESEARCH steps each see only THINK output (not each other's)
+            var captor = ArgumentCaptor.forClass(StepExecutionContext.class);
+            verify(stepExecutor, times(4)).execute(captor.capture());
+            var researchContexts = captor.getAllValues().stream()
+                    .filter(ctx -> ctx.stepType() == StepType.RESEARCH)
+                    .toList();
+
+            for (var ctx : researchContexts) {
+                assertThat(ctx.previousOutputs()).containsExactly(THINK_OUTPUT_RUN);
+            }
+        }
+
+        @Test
+        void parallel_research_one_degrades_others_complete() {
+            var steps = List.of(
+                    new TaskPlannerPort.PlannedStep("分析", StepType.THINK),
+                    new TaskPlannerPort.PlannedStep("搜索1", StepType.RESEARCH),
+                    new TaskPlannerPort.PlannedStep("搜索2", StepType.RESEARCH),
+                    new TaskPlannerPort.PlannedStep("撰写", StepType.WRITE));
+
+            when(stepExecutor.execute(argThat(ctx ->
+                    ctx != null && ctx.stepType() == StepType.THINK)))
+                    .thenReturn(new StepOutput(THINK_OUTPUT_RUN));
+            when(stepExecutor.execute(argThat(ctx ->
+                    ctx != null && "搜索1".equals(ctx.stepName()))))
+                    .thenThrow(new StepExecutionException("LLM timeout"));
+            when(stepExecutor.execute(argThat(ctx ->
+                    ctx != null && "搜索2".equals(ctx.stepName()))))
+                    .thenReturn(new StepOutput("结果2"));
+            when(stepExecutor.execute(argThat(ctx ->
+                    ctx != null && ctx.stepType() == StepType.WRITE)))
+                    .thenReturn(new StepOutput("报告"));
+
+            orchestrator.executeSteps("任务", steps, listener);
+
+            // 搜索1 degraded (skipped), 搜索2 completed, WRITE continues
+            verify(listener).onStepSkipped("搜索1", "LLM timeout");
+            verify(listener).onStepCompleted("搜索2", "结果2");
+            verify(listener).onStepCompleted("撰写", "报告");
+
+            // WRITE receives THINK + only 搜索2 output (搜索1 skipped, no output)
+            var captor = ArgumentCaptor.forClass(StepExecutionContext.class);
+            verify(stepExecutor, times(4)).execute(captor.capture());
+            var writeContext = captor.getAllValues().stream()
+                    .filter(ctx -> ctx.stepType() == StepType.WRITE)
+                    .findFirst().orElseThrow();
+            assertThat(writeContext.previousOutputs())
+                    .contains(THINK_OUTPUT_RUN, "结果2")
+                    .hasSize(2);
         }
 
         @Test
