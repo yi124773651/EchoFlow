@@ -10,6 +10,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.Resource;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
@@ -39,6 +40,7 @@ public class StepExecutorRouter implements StepExecutorPort {
     private final Map<StepType, ChatClient> primaryClients;
     private final ChatClient fallbackClient;
 
+    @Autowired
     public StepExecutorRouter(ChatClientProvider chatClientProvider,
                               MultiModelProperties properties,
                               @Value("classpath:prompts/step-think.st") Resource thinkPrompt,
