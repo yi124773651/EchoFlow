@@ -52,6 +52,10 @@ echoflow:
     url: ${WEBHOOK_URL:}
     connect-timeout: 5s
     read-timeout: 10s
+  review:
+    enabled: false
+    max-attempts: 3
+    quality-threshold: 80
 
 management:
   endpoints:

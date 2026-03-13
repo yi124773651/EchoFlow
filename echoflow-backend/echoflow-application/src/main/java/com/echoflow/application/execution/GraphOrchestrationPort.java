@@ -1,5 +1,6 @@
 package com.echoflow.application.execution;
 
+import com.echoflow.domain.execution.LogType;
 import com.echoflow.domain.execution.StepType;
 
 import java.util.List;
@@ -51,5 +52,15 @@ public interface GraphOrchestrationPort {
 
         /** Called when a step fails fatally. The graph will abort after this. */
         void onStepFailed(String stepName, String reason);
+
+        /**
+         * Called for intermediate progress during multi-iteration steps
+         * (e.g., review loop feedback and revision attempts).
+         *
+         * <p>Default no-op for backward compatibility with existing listeners
+         * that do not need intermediate progress tracking.</p>
+         */
+        default void onStepProgress(String stepName, LogType logType, String content) {
+        }
     }
 }

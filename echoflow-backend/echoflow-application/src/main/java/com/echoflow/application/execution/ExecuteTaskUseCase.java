@@ -173,6 +173,14 @@ public class ExecuteTaskUseCase {
                                 failStep(execution, step.id(), reason);
                             }
                         }
+
+                        @Override
+                        public void onStepProgress(String stepName, LogType logType, String content) {
+                            synchronized (execution) {
+                                var step = findStepByName(execution, stepName);
+                                appendLog(execution, step.id(), logType, content, clock.instant());
+                            }
+                        }
                     });
 
             completeExecution(execution);

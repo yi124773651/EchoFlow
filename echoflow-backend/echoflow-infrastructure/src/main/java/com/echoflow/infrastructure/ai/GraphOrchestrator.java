@@ -3,7 +3,9 @@ package com.echoflow.infrastructure.ai;
 import com.alibaba.cloud.ai.graph.CompileConfig;
 import com.alibaba.cloud.ai.graph.KeyStrategy;
 import com.alibaba.cloud.ai.graph.StateGraph;
+import com.alibaba.cloud.ai.graph.action.AsyncEdgeAction;
 import com.alibaba.cloud.ai.graph.action.AsyncMultiCommandAction;
+import com.alibaba.cloud.ai.graph.action.AsyncNodeAction;
 import com.alibaba.cloud.ai.graph.checkpoint.config.SaverConfig;
 import com.alibaba.cloud.ai.graph.checkpoint.savers.MemorySaver;
 import com.alibaba.cloud.ai.graph.exception.GraphStateException;
@@ -13,6 +15,7 @@ import com.echoflow.application.execution.TaskPlannerPort;
 import com.echoflow.domain.execution.StepType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Component;
 
 import java.util.HashMap;
@@ -28,10 +31,19 @@ import java.util.Map;
  * steps are executed in parallel or skipped. Otherwise, a simple linear chain
  * is built.</p>
  *
+ * <p>When a {@link LlmWriteReviewer} is provided, WRITE steps are wrapped in
+ * a review loop: WRITE → review_gate → (conditional) → revise_write → review_gate.
+ * The review gate evaluates output quality via LLM-as-Judge and routes to either
+ * approve (continue to next node) or revise (backward edge creating cycle).</p>
+ *
  * <p>State is passed between nodes via {@code OverAllState}:
  * <ul>
  *   <li>{@code taskDescription} — REPLACE strategy (constant across all nodes)</li>
  *   <li>{@code outputs} — APPEND strategy (accumulates step outputs)</li>
+ *   <li>{@code writeOutput} — REPLACE strategy (latest WRITE output, review-only)</li>
+ *   <li>{@code writeAttempts} — REPLACE strategy (attempt counter, review-only)</li>
+ *   <li>{@code reviewDecision} — REPLACE strategy ("approve"/"revise", review-only)</li>
+ *   <li>{@code reviewFeedback} — REPLACE strategy (latest feedback, review-only)</li>
  * </ul>
  *
  * <p>All StateGraph/OverAllState/KeyStrategy types are confined to this
@@ -46,11 +58,27 @@ public class GraphOrchestrator implements GraphOrchestrationPort {
             "Conditionally skipped: THINK analysis determined research is not needed";
 
     static final String SKIP_NODE_ID = "skip_research";
+    static final String REVIEW_GATE_ID = "review_gate";
+    static final String REVISE_NODE_ID = "revise_write";
 
     private final StepExecutorPort stepExecutor;
+    private final LlmWriteReviewer writeReviewer;
+    private final int maxAttempts;
 
-    public GraphOrchestrator(StepExecutorPort stepExecutor) {
+    public GraphOrchestrator(StepExecutorPort stepExecutor,
+                              ObjectProvider<LlmWriteReviewer> writeReviewerProvider,
+                              WriteReviewProperties reviewProperties) {
+        this(stepExecutor,
+             writeReviewerProvider.getIfAvailable(),
+             reviewProperties.maxAttempts());
+    }
+
+    GraphOrchestrator(StepExecutorPort stepExecutor,
+                       LlmWriteReviewer writeReviewer,
+                       int maxAttempts) {
         this.stepExecutor = stepExecutor;
+        this.writeReviewer = writeReviewer;
+        this.maxAttempts = maxAttempts;
     }
 
     @Override
@@ -72,11 +100,18 @@ public class GraphOrchestrator implements GraphOrchestrationPort {
 
     private StateGraph buildGraph(List<TaskPlannerPort.PlannedStep> steps,
                                   StepProgressListener listener) throws GraphStateException {
-        var keyStrategyFactory = KeyStrategy.builder()
+        var builder = KeyStrategy.builder()
                 .addStrategy(StepNodeAction.STATE_KEY_TASK_DESCRIPTION, KeyStrategy.REPLACE)
-                .addStrategy(StepNodeAction.STATE_KEY_OUTPUTS, KeyStrategy.APPEND)
-                .build();
+                .addStrategy(StepNodeAction.STATE_KEY_OUTPUTS, KeyStrategy.APPEND);
 
+        if (reviewEnabled()) {
+            builder.addStrategy(ReviewableWriteNodeAction.STATE_KEY_WRITE_OUTPUT, KeyStrategy.REPLACE)
+                   .addStrategy(ReviewableWriteNodeAction.STATE_KEY_WRITE_ATTEMPTS, KeyStrategy.REPLACE)
+                   .addStrategy(ReviewableWriteNodeAction.STATE_KEY_REVIEW_DECISION, KeyStrategy.REPLACE)
+                   .addStrategy(WriteReviewGateAction.STATE_KEY_REVIEW_FEEDBACK, KeyStrategy.REPLACE);
+        }
+
+        var keyStrategyFactory = builder.build();
         var graph = new StateGraph("execution", keyStrategyFactory);
         var researchRange = findResearchRange(steps);
 
@@ -89,20 +124,24 @@ public class GraphOrchestrator implements GraphOrchestrationPort {
 
     /**
      * Build a linear chain: START → step_1 → step_2 → ... → END.
-     * Used when no THINK→RESEARCH pattern is detected.
+     * When review is enabled, WRITE steps are wrapped with a review loop.
      */
     private StateGraph buildLinearGraph(StateGraph graph,
                                         List<TaskPlannerPort.PlannedStep> steps,
                                         StepProgressListener listener) throws GraphStateException {
         for (int i = 0; i < steps.size(); i++) {
-            graph.addNode(nodeId(i), new StepNodeAction(steps.get(i), stepExecutor, listener));
+            graph.addNode(nodeId(i), createNodeAction(steps.get(i), listener));
         }
 
         graph.addEdge(StateGraph.START, nodeId(0));
-        for (int i = 0; i < steps.size() - 1; i++) {
-            graph.addEdge(nodeId(i), nodeId(i + 1));
+        for (int i = 0; i < steps.size(); i++) {
+            String nextTarget = (i + 1 < steps.size()) ? nodeId(i + 1) : StateGraph.END;
+            if (shouldAddReviewLoop(steps.get(i))) {
+                addWriteReviewLoop(graph, nodeId(i), nextTarget, steps.get(i), listener);
+            } else {
+                graph.addEdge(nodeId(i), nextTarget);
+            }
         }
-        graph.addEdge(nodeId(steps.size() - 1), StateGraph.END);
 
         return graph;
     }
@@ -118,8 +157,9 @@ public class GraphOrchestrator implements GraphOrchestrationPort {
      *
      * <pre>
      * START → ... → think ─[parallelConditional]─→ R1 ──────────┐
-     *                                              R2 ──────────┤─→ write → ... → END
-     *                          └──→ skip_research ──────────────┘
+     *                                              R2 ──────────┤─→ write → review_gate ─[revise]→ revise_write ─┐
+     *                          └──→ skip_research ──────────────┘              └─[approve]─→ notify → END        │
+     *                                                                              ↑────────────────────────────┘
      * </pre>
      */
     private StateGraph buildConditionalGraph(StateGraph graph,
@@ -133,9 +173,9 @@ public class GraphOrchestrator implements GraphOrchestrationPort {
         log.info("Parallel conditional routing: THINK at index {}, RESEARCH range [{}, {}] ({} parallel nodes)",
                 thinkIndex, researchStart, researchEnd, researchEnd - researchStart + 1);
 
-        // 1. Add all regular step nodes
+        // 1. Add all step nodes (WRITE steps use ReviewableWriteNodeAction when review enabled)
         for (int i = 0; i < steps.size(); i++) {
-            graph.addNode(nodeId(i), new StepNodeAction(steps.get(i), stepExecutor, listener));
+            graph.addNode(nodeId(i), createNodeAction(steps.get(i), listener));
         }
 
         // 2. Add single aggregated skip node for all RESEARCH steps
@@ -175,13 +215,60 @@ public class GraphOrchestrator implements GraphOrchestrationPort {
 
         // 6. Linear suffix from convergence point to END
         if (convergeIndex < steps.size()) {
-            for (int i = convergeIndex; i < steps.size() - 1; i++) {
-                graph.addEdge(nodeId(i), nodeId(i + 1));
+            for (int i = convergeIndex; i < steps.size(); i++) {
+                String nextTarget = (i + 1 < steps.size()) ? nodeId(i + 1) : StateGraph.END;
+                if (shouldAddReviewLoop(steps.get(i))) {
+                    addWriteReviewLoop(graph, nodeId(i), nextTarget, steps.get(i), listener);
+                } else {
+                    graph.addEdge(nodeId(i), nextTarget);
+                }
             }
-            graph.addEdge(nodeId(steps.size() - 1), StateGraph.END);
         }
 
         return graph;
+    }
+
+    private AsyncNodeAction createNodeAction(TaskPlannerPort.PlannedStep step,
+                                              StepProgressListener listener) {
+        if (shouldAddReviewLoop(step)) {
+            return new ReviewableWriteNodeAction(step, stepExecutor, listener);
+        }
+        return new StepNodeAction(step, stepExecutor, listener);
+    }
+
+    private boolean shouldAddReviewLoop(TaskPlannerPort.PlannedStep step) {
+        return reviewEnabled() && step.type() == StepType.WRITE;
+    }
+
+    boolean reviewEnabled() {
+        return writeReviewer != null;
+    }
+
+    /**
+     * Insert a review loop after a WRITE node: WRITE → review_gate → (conditional)
+     * → revise_write → review_gate (backward edge). The review_gate routes to either
+     * "approve" (→ nextTarget) or "revise" (→ revise_write).
+     */
+    private void addWriteReviewLoop(StateGraph graph, String writeNodeId, String nextTarget,
+                                     TaskPlannerPort.PlannedStep writeStep,
+                                     StepProgressListener listener) throws GraphStateException {
+        log.info("Adding write review loop after '{}' (maxAttempts={})", writeStep.name(), maxAttempts);
+
+        graph.addNode(REVIEW_GATE_ID, new WriteReviewGateAction(
+                writeStep.name(), writeReviewer, listener, maxAttempts));
+        graph.addNode(REVISE_NODE_ID, new WriteReviseAction(
+                writeStep.name(), stepExecutor, listener));
+
+        // WRITE → review_gate
+        graph.addEdge(writeNodeId, REVIEW_GATE_ID);
+        // revise_write → review_gate (backward edge creating cycle)
+        graph.addEdge(REVISE_NODE_ID, REVIEW_GATE_ID);
+        // review_gate → conditional routing
+        graph.addConditionalEdges(REVIEW_GATE_ID,
+                AsyncEdgeAction.edge_async(state ->
+                    state.<String>value(ReviewableWriteNodeAction.STATE_KEY_REVIEW_DECISION)
+                        .orElse("approve")),
+                Map.of("revise", REVISE_NODE_ID, "approve", nextTarget));
     }
 
     /**

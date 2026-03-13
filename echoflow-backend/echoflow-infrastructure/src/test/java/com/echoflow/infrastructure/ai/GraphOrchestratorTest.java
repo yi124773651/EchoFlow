@@ -2,6 +2,7 @@ package com.echoflow.infrastructure.ai;
 
 import com.echoflow.application.execution.*;
 import com.echoflow.application.execution.GraphOrchestrationPort.StepProgressListener;
+import com.echoflow.domain.execution.LogType;
 import com.echoflow.domain.execution.StepType;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Nested;
@@ -33,7 +34,7 @@ class GraphOrchestratorTest {
 
     @BeforeEach
     void setUp() {
-        orchestrator = new GraphOrchestrator(stepExecutor);
+        orchestrator = new GraphOrchestrator(stepExecutor, null, 3);
     }
 
     @Nested
@@ -592,6 +593,184 @@ class GraphOrchestratorTest {
             verify(listener).onStepCompleted("分析", THINK_OUTPUT_SKIP);
             verify(listener).onStepSkipped(eq("搜索"), anyString());
             verify(stepExecutor, times(1)).execute(any());
+        }
+    }
+
+    @Nested
+    class WriteReviewLoop {
+
+        private static final String THINK_OUTPUT_RUN =
+                "Analysis complete.\n\n[ROUTING]\nneeds_research: YES\nreason: Need data";
+
+        @Mock private LlmWriteReviewer reviewer;
+
+        @BeforeEach
+        void setUpReviewOrchestrator() {
+            orchestrator = new GraphOrchestrator(stepExecutor, reviewer, 3);
+        }
+
+        @Test
+        void approve_on_first_attempt() {
+            var steps = List.of(
+                    new TaskPlannerPort.PlannedStep("分析", StepType.THINK),
+                    new TaskPlannerPort.PlannedStep("撰写", StepType.WRITE),
+                    new TaskPlannerPort.PlannedStep("通知", StepType.NOTIFY));
+
+            when(stepExecutor.execute(argThat(ctx -> ctx != null && ctx.stepType() == StepType.THINK)))
+                    .thenReturn(new StepOutput("分析结果"));
+            when(stepExecutor.execute(argThat(ctx -> ctx != null && ctx.stepType() == StepType.WRITE)))
+                    .thenReturn(new StepOutput("# Report"));
+            when(stepExecutor.execute(argThat(ctx -> ctx != null && ctx.stepType() == StepType.NOTIFY)))
+                    .thenReturn(new StepOutput("已通知"));
+            when(reviewer.evaluate("test task", "撰写", "# Report"))
+                    .thenReturn(new ReviewResult(90, true, "No issues"));
+
+            orchestrator.executeSteps("test task", steps, listener);
+
+            // All steps complete in order
+            InOrder inOrder = inOrder(listener);
+            inOrder.verify(listener).onStepStarting("分析", StepType.THINK);
+            inOrder.verify(listener).onStepCompleted("分析", "分析结果");
+            inOrder.verify(listener).onStepStarting("撰写", StepType.WRITE);
+            // onStepCompleted for WRITE comes from review_gate, not the WRITE node
+            inOrder.verify(listener).onStepCompleted("撰写", "# Report");
+            inOrder.verify(listener).onStepStarting("通知", StepType.NOTIFY);
+            inOrder.verify(listener).onStepCompleted("通知", "已通知");
+
+            // Reviewer called once
+            verify(reviewer, times(1)).evaluate(any(), any(), any());
+        }
+
+        @Test
+        void revise_then_approve() {
+            var steps = List.of(
+                    new TaskPlannerPort.PlannedStep("分析", StepType.THINK),
+                    new TaskPlannerPort.PlannedStep("撰写", StepType.WRITE),
+                    new TaskPlannerPort.PlannedStep("通知", StepType.NOTIFY));
+
+            when(stepExecutor.execute(argThat(ctx -> ctx != null && ctx.stepType() == StepType.THINK)))
+                    .thenReturn(new StepOutput("分析结果"));
+            when(stepExecutor.execute(argThat(ctx -> ctx != null && ctx.stepType() == StepType.WRITE)))
+                    .thenReturn(new StepOutput("# Draft"))
+                    .thenReturn(new StepOutput("# Revised"));
+            when(stepExecutor.execute(argThat(ctx -> ctx != null && ctx.stepType() == StepType.NOTIFY)))
+                    .thenReturn(new StepOutput("已通知"));
+            when(reviewer.evaluate(eq("test task"), eq("撰写"), any()))
+                    .thenReturn(new ReviewResult(50, false, "Needs more detail"))
+                    .thenReturn(new ReviewResult(85, true, "Good"));
+
+            orchestrator.executeSteps("test task", steps, listener);
+
+            // WRITE starts once, completes once (with revised output)
+            verify(listener).onStepStarting("撰写", StepType.WRITE);
+            verify(listener).onStepCompleted("撰写", "# Revised");
+
+            // Reviewer called twice (reject then approve)
+            verify(reviewer, times(2)).evaluate(any(), any(), any());
+
+            // WRITE executor called twice (original + revision)
+            verify(stepExecutor, times(2)).execute(argThat(ctx ->
+                    ctx != null && ctx.stepType() == StepType.WRITE));
+
+            // Progress logged during review + revision
+            verify(listener).onStepProgress(eq("撰写"), eq(LogType.THOUGHT),
+                    argThat(s -> s.contains("score 50/100")));
+            verify(listener).onStepProgress(eq("撰写"), eq(LogType.ACTION),
+                    argThat(s -> s.contains("Revising")));
+
+            // NOTIFY still completes
+            verify(listener).onStepCompleted("通知", "已通知");
+        }
+
+        @Test
+        void max_attempts_forces_approve() {
+            orchestrator = new GraphOrchestrator(stepExecutor, reviewer, 2);
+
+            var steps = List.of(
+                    new TaskPlannerPort.PlannedStep("撰写", StepType.WRITE),
+                    new TaskPlannerPort.PlannedStep("通知", StepType.NOTIFY));
+
+            when(stepExecutor.execute(argThat(ctx -> ctx != null && ctx.stepType() == StepType.WRITE)))
+                    .thenReturn(new StepOutput("# Draft"))
+                    .thenReturn(new StepOutput("# Draft v2"));
+            when(stepExecutor.execute(argThat(ctx -> ctx != null && ctx.stepType() == StepType.NOTIFY)))
+                    .thenReturn(new StepOutput("已通知"));
+            when(reviewer.evaluate(any(), any(), any()))
+                    .thenReturn(new ReviewResult(50, false, "Needs work"))
+                    .thenReturn(new ReviewResult(60, false, "Still needs work"));
+
+            orchestrator.executeSteps("test task", steps, listener);
+
+            // Force-approved after max attempts
+            verify(listener).onStepCompleted("撰写", "# Draft v2");
+            verify(listener).onStepCompleted("通知", "已通知");
+            verify(reviewer, times(2)).evaluate(any(), any(), any());
+        }
+
+        @Test
+        void conditional_graph_with_review_loop() {
+            var steps = List.of(
+                    new TaskPlannerPort.PlannedStep("分析", StepType.THINK),
+                    new TaskPlannerPort.PlannedStep("搜索", StepType.RESEARCH),
+                    new TaskPlannerPort.PlannedStep("撰写", StepType.WRITE),
+                    new TaskPlannerPort.PlannedStep("通知", StepType.NOTIFY));
+
+            when(stepExecutor.execute(argThat(ctx -> ctx != null && ctx.stepType() == StepType.THINK)))
+                    .thenReturn(new StepOutput(THINK_OUTPUT_RUN));
+            when(stepExecutor.execute(argThat(ctx -> ctx != null && ctx.stepType() == StepType.RESEARCH)))
+                    .thenReturn(new StepOutput("搜索结果"));
+            when(stepExecutor.execute(argThat(ctx -> ctx != null && ctx.stepType() == StepType.WRITE)))
+                    .thenReturn(new StepOutput("# Report"));
+            when(stepExecutor.execute(argThat(ctx -> ctx != null && ctx.stepType() == StepType.NOTIFY)))
+                    .thenReturn(new StepOutput("已通知"));
+            when(reviewer.evaluate(any(), any(), any()))
+                    .thenReturn(new ReviewResult(90, true, "Good"));
+
+            orchestrator.executeSteps("任务", steps, listener);
+
+            // All steps complete
+            verify(listener).onStepCompleted("分析", THINK_OUTPUT_RUN);
+            verify(listener).onStepCompleted("搜索", "搜索结果");
+            verify(listener).onStepCompleted("撰写", "# Report");
+            verify(listener).onStepCompleted("通知", "已通知");
+            verify(reviewer, times(1)).evaluate(any(), any(), any());
+        }
+
+        @Test
+        void write_degradation_skips_review() {
+            var steps = List.of(
+                    new TaskPlannerPort.PlannedStep("分析", StepType.THINK),
+                    new TaskPlannerPort.PlannedStep("撰写", StepType.WRITE),
+                    new TaskPlannerPort.PlannedStep("通知", StepType.NOTIFY));
+
+            when(stepExecutor.execute(argThat(ctx -> ctx != null && ctx.stepType() == StepType.THINK)))
+                    .thenReturn(new StepOutput("分析结果"));
+            when(stepExecutor.execute(argThat(ctx -> ctx != null && ctx.stepType() == StepType.WRITE)))
+                    .thenThrow(new StepExecutionException("LLM timeout"));
+            when(stepExecutor.execute(argThat(ctx -> ctx != null && ctx.stepType() == StepType.NOTIFY)))
+                    .thenReturn(new StepOutput("已通知"));
+
+            orchestrator.executeSteps("test task", steps, listener);
+
+            // WRITE skipped, review auto-approves (blank output)
+            verify(listener).onStepSkipped("撰写", "LLM timeout");
+            verify(listener).onStepCompleted("通知", "已通知");
+            // Reviewer never called because writeOutput is blank
+            verifyNoInteractions(reviewer);
+        }
+
+        @Test
+        void review_enabled_but_no_write_step() {
+            var steps = List.of(
+                    new TaskPlannerPort.PlannedStep("分析", StepType.THINK),
+                    new TaskPlannerPort.PlannedStep("通知", StepType.NOTIFY));
+
+            when(stepExecutor.execute(any())).thenReturn(new StepOutput("output"));
+
+            orchestrator.executeSteps("task", steps, listener);
+
+            verify(stepExecutor, times(2)).execute(any());
+            verifyNoInteractions(reviewer);
         }
     }
 }

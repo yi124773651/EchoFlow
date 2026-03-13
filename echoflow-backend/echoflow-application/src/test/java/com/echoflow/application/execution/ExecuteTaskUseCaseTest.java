@@ -4,6 +4,7 @@ import com.echoflow.application.execution.GraphOrchestrationPort.StepProgressLis
 import com.echoflow.domain.execution.Execution;
 import com.echoflow.domain.execution.ExecutionRepository;
 import com.echoflow.domain.execution.ExecutionStatus;
+import com.echoflow.domain.execution.LogType;
 import com.echoflow.domain.execution.StepType;
 import com.echoflow.domain.task.Task;
 import com.echoflow.domain.task.TaskId;
@@ -319,5 +320,42 @@ class ExecuteTaskUseCaseTest {
         assertThat(eventTypes.stream().filter(t -> t.equals("StepCompleted")).count()).isEqualTo(4);
 
         verify(executionRepository, atLeast(4)).save(any(Execution.class));
+    }
+
+    @Test
+    void execute_onStepProgress_appends_log_and_publishes_event() {
+        var taskId = TaskId.generate();
+        var task = Task.submit(taskId, "review test", NOW);
+        when(taskRepository.findById(taskId)).thenReturn(Optional.of(task));
+        when(taskPlanner.planSteps("review test")).thenReturn(List.of(
+                new TaskPlannerPort.PlannedStep("撰写", StepType.WRITE)
+        ));
+
+        doAnswer(invocation -> {
+            StepProgressListener listener = invocation.getArgument(2);
+            listener.onStepStarting("撰写", StepType.WRITE);
+            listener.onStepProgress("撰写", LogType.THOUGHT,
+                    "Review: score 65/100. Needs more detail.");
+            listener.onStepProgress("撰写", LogType.ACTION,
+                    "Revising draft...");
+            listener.onStepCompleted("撰写", "最终报告");
+            return null;
+        }).when(graphOrchestrator).executeSteps(any(), any(), any());
+
+        useCase.execute(taskId);
+
+        assertThat(task.status()).isEqualTo(TaskStatus.COMPLETED);
+
+        var logEvents = publishedEvents.stream()
+                .filter(e -> e instanceof ExecutionEvent.StepLogAppended)
+                .map(e -> (ExecutionEvent.StepLogAppended) e)
+                .toList();
+
+        // ACTION (from onStepStarting) + THOUGHT (progress) + ACTION (progress) + OBSERVATION (from onStepCompleted)
+        assertThat(logEvents).hasSize(4);
+        assertThat(logEvents.get(1).logType()).isEqualTo(LogType.THOUGHT);
+        assertThat(logEvents.get(1).content()).contains("score 65/100");
+        assertThat(logEvents.get(2).logType()).isEqualTo(LogType.ACTION);
+        assertThat(logEvents.get(2).content()).contains("Revising draft");
     }
 }
