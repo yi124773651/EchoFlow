@@ -16,6 +16,7 @@ import com.echoflow.domain.execution.StepType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.util.HashMap;
@@ -65,6 +66,7 @@ public class GraphOrchestrator implements GraphOrchestrationPort {
     private final LlmWriteReviewer writeReviewer;
     private final int maxAttempts;
 
+    @Autowired
     public GraphOrchestrator(StepExecutorPort stepExecutor,
                               ObjectProvider<LlmWriteReviewer> writeReviewerProvider,
                               WriteReviewProperties reviewProperties) {
