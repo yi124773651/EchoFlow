@@ -1,7 +1,7 @@
 package com.echoflow.web.config;
 
-import com.echoflow.infrastructure.ai.MultiModelProperties;
-import com.echoflow.infrastructure.ai.WriteReviewProperties;
+import com.echoflow.infrastructure.ai.config.MultiModelProperties;
+import com.echoflow.infrastructure.ai.config.WriteReviewProperties;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;

@@ -1,0 +1,14 @@
+package com.echoflow.infrastructure.ai.executor;
+
+import org.springframework.core.io.Resource;
+
+/**
+ * Executes WRITE steps. Passes previous context to synthesize
+ * a comprehensive Markdown report.
+ */
+class LlmWriteExecutor extends LlmStepExecutor {
+
+    LlmWriteExecutor(Resource promptTemplate) {
+        super(promptTemplate);
+    }
+}
