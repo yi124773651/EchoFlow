@@ -1,0 +1,25 @@
+spring:
+  ai:
+    openai:
+      api-key: test-key-for-smoke
+      base-url: http://localhost:0
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+
+echoflow:
+  review:
+    enabled: false
+  ai:
+    connect-timeout: 2s
+    read-timeout: 5s
+    routing:
+      step-aliases: {}
+      fallback: ""
+    models: {}
+  github:
+    token: ""
+  webhook:
+    url: ""
