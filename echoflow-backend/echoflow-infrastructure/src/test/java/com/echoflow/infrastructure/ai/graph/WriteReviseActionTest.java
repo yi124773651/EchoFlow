@@ -6,8 +6,10 @@ import com.echoflow.application.execution.GraphOrchestrationPort.StepProgressLis
 import com.echoflow.application.execution.StepExecutionContext;
 import com.echoflow.application.execution.StepExecutorPort;
 import com.echoflow.application.execution.StepOutput;
+import com.echoflow.domain.execution.ApprovalDecision;
 import com.echoflow.domain.execution.LogType;
 import com.echoflow.domain.execution.StepType;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -25,6 +27,12 @@ class WriteReviseActionTest {
 
     @Mock private StepExecutorPort stepExecutor;
     @Mock private StepProgressListener listener;
+
+    @BeforeEach
+    void setUp() {
+        lenient().when(listener.onStepAwaitingApproval(any(), any()))
+                .thenReturn(ApprovalDecision.APPROVED);
+    }
 
     private OverAllState createState(String writeOutput, String feedback, int attempts) {
         var state = new OverAllState();

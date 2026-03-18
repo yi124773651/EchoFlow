@@ -1,5 +1,6 @@
 package com.echoflow.web.config;
 
+import com.echoflow.infrastructure.ai.config.HumanApprovalProperties;
 import com.echoflow.infrastructure.ai.config.MultiModelProperties;
 import com.echoflow.infrastructure.ai.config.WriteReviewProperties;
 import org.springframework.beans.factory.annotation.Value;
@@ -25,7 +26,7 @@ import java.time.Duration;
  * <p>Also registers {@link MultiModelProperties} for multi-model routing configuration.</p>
  */
 @Configuration
-@EnableConfigurationProperties({MultiModelProperties.class, WriteReviewProperties.class})
+@EnableConfigurationProperties({MultiModelProperties.class, WriteReviewProperties.class, HumanApprovalProperties.class})
 public class AiClientConfig {
 
     @Bean

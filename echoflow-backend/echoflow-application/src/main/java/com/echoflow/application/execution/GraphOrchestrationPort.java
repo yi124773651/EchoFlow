@@ -1,5 +1,6 @@
 package com.echoflow.application.execution;
 
+import com.echoflow.domain.execution.ApprovalDecision;
 import com.echoflow.domain.execution.LogType;
 import com.echoflow.domain.execution.StepType;
 
@@ -61,6 +62,16 @@ public interface GraphOrchestrationPort {
          * that do not need intermediate progress tracking.</p>
          */
         default void onStepProgress(String stepName, LogType logType, String content) {
+        }
+
+        /**
+         * Called when a step requires human approval before execution.
+         * The implementation should block until a decision is made.
+         *
+         * <p>Default: auto-approve (backward compatible, feature off).</p>
+         */
+        default ApprovalDecision onStepAwaitingApproval(String stepName, StepType stepType) {
+            return ApprovalDecision.APPROVED;
         }
     }
 }

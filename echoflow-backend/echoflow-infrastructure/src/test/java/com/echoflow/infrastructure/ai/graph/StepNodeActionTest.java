@@ -4,6 +4,7 @@ import com.alibaba.cloud.ai.graph.KeyStrategy;
 import com.alibaba.cloud.ai.graph.OverAllState;
 import com.echoflow.application.execution.*;
 import com.echoflow.application.execution.GraphOrchestrationPort.StepProgressListener;
+import com.echoflow.domain.execution.ApprovalDecision;
 import com.echoflow.domain.execution.StepType;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Nested;
@@ -34,6 +35,8 @@ class StepNodeActionTest {
     void setUp() {
         thinkStep = new TaskPlannerPort.PlannedStep("分析需求", StepType.THINK);
         researchStep = new TaskPlannerPort.PlannedStep("搜索资料", StepType.RESEARCH);
+        lenient().when(listener.onStepAwaitingApproval(any(), any()))
+                .thenReturn(ApprovalDecision.APPROVED);
     }
 
     private OverAllState stateWith(String taskDescription, List<String> outputs) {

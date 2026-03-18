@@ -4,11 +4,17 @@ import com.echoflow.domain.EntityNotFoundException;
 import com.echoflow.domain.execution.*;
 import com.echoflow.domain.task.TaskId;
 import com.echoflow.domain.task.TaskRepository;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionOperations;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.time.Clock;
 import java.time.Instant;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 /**
  * Use case: execute a submitted task through a pipeline of steps.
@@ -30,28 +36,39 @@ import java.time.Instant;
 @Service
 public class ExecuteTaskUseCase {
 
+    private static final Logger log = LoggerFactory.getLogger(ExecuteTaskUseCase.class);
+
     private final TaskRepository taskRepository;
     private final ExecutionRepository executionRepository;
     private final ExecutionEventPublisher eventPublisher;
     private final TaskPlannerPort taskPlanner;
     private final GraphOrchestrationPort graphOrchestrator;
+    private final ApprovalGateService approvalGateService;
     private final Clock clock;
     private final TransactionOperations tx;
+    private final boolean approvalEnabled;
+    private final int approvalTimeoutMinutes;
 
     public ExecuteTaskUseCase(TaskRepository taskRepository,
                               ExecutionRepository executionRepository,
                               ExecutionEventPublisher eventPublisher,
                               TaskPlannerPort taskPlanner,
                               GraphOrchestrationPort graphOrchestrator,
+                              ApprovalGateService approvalGateService,
                               Clock clock,
-                              TransactionOperations tx) {
+                              TransactionOperations tx,
+                              @Value("${echoflow.approval.enabled:false}") boolean approvalEnabled,
+                              @Value("${echoflow.approval.timeout-minutes:30}") int approvalTimeoutMinutes) {
         this.taskRepository = taskRepository;
         this.executionRepository = executionRepository;
         this.eventPublisher = eventPublisher;
         this.taskPlanner = taskPlanner;
         this.graphOrchestrator = graphOrchestrator;
+        this.approvalGateService = approvalGateService;
         this.clock = clock;
         this.tx = tx;
+        this.approvalEnabled = approvalEnabled;
+        this.approvalTimeoutMinutes = approvalTimeoutMinutes;
     }
 
     /**
@@ -181,6 +198,14 @@ public class ExecuteTaskUseCase {
                                 appendLog(execution, step.id(), logType, content, clock.instant());
                             }
                         }
+
+                        @Override
+                        public ApprovalDecision onStepAwaitingApproval(String stepName, StepType stepType) {
+                            if (!approvalEnabled || stepType != StepType.WRITE) {
+                                return ApprovalDecision.APPROVED;
+                            }
+                            return waitForApproval(execution, stepName);
+                        }
                     });
 
             completeExecution(execution);
@@ -243,7 +268,68 @@ public class ExecuteTaskUseCase {
         eventPublisher.publish(new ExecutionEvent.ExecutionCompleted(execution.id(), now));
     }
 
+    /**
+     * Block the virtual thread until the user approves or rejects the step.
+     */
+    private ApprovalDecision waitForApproval(Execution execution, String stepName) {
+        synchronized (execution) {
+            var step = findStepByName(execution, stepName);
+            execution.markStepWaitingApproval(step.id());
+            execution.markWaitingApproval();
+            saveExecution(execution);
+
+            appendLog(execution, step.id(), LogType.ACTION,
+                    "Awaiting human approval", clock.instant());
+            eventPublisher.publish(new ExecutionEvent.StepAwaitingApproval(
+                    execution.id(), step.id(), stepName, step.type(), clock.instant()));
+        }
+
+        try {
+            var gate = approvalGateService.createGate(execution.id());
+            var decision = gate.get(approvalTimeoutMinutes, TimeUnit.MINUTES);
+
+            synchronized (execution) {
+                var step = findStepByName(execution, stepName);
+                execution.resumeStepFromApproval(step.id());
+                execution.resumeRunning();
+                saveExecution(execution);
+
+                appendLog(execution, step.id(), LogType.ACTION,
+                        decision.approved()
+                                ? "Approved by user"
+                                : "Rejected by user: " + decision.reason(),
+                        clock.instant());
+                eventPublisher.publish(new ExecutionEvent.StepApprovalDecided(
+                        execution.id(), step.id(), decision.approved(),
+                        decision.reason(), clock.instant()));
+            }
+            return decision;
+        } catch (TimeoutException e) {
+            log.warn("Approval timeout for execution {}, auto-approving", execution.id());
+            approvalGateService.cancel(execution.id());
+            synchronized (execution) {
+                var step = findStepByName(execution, stepName);
+                execution.resumeStepFromApproval(step.id());
+                execution.resumeRunning();
+                saveExecution(execution);
+            }
+            return ApprovalDecision.APPROVED;
+        } catch (Exception e) {
+            log.warn("Approval gate error for execution {}, auto-approving: {}",
+                    execution.id(), e.getMessage());
+            approvalGateService.cancel(execution.id());
+            synchronized (execution) {
+                var step = findStepByName(execution, stepName);
+                execution.resumeStepFromApproval(step.id());
+                execution.resumeRunning();
+                saveExecution(execution);
+            }
+            return ApprovalDecision.APPROVED;
+        }
+    }
+
     private void failExecution(Execution execution, String reason) {
+        approvalGateService.cancel(execution.id());
         var now = clock.instant();
         execution.markFailed(now);
 

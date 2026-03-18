@@ -11,8 +11,8 @@ export interface TaskDto {
 }
 
 /** Execution status */
-export type ExecutionStatus = "PLANNING" | "RUNNING" | "COMPLETED" | "FAILED";
-export type StepStatus = "PENDING" | "RUNNING" | "COMPLETED" | "SKIPPED" | "FAILED";
+export type ExecutionStatus = "PLANNING" | "RUNNING" | "WAITING_APPROVAL" | "COMPLETED" | "FAILED";
+export type StepStatus = "PENDING" | "RUNNING" | "WAITING_APPROVAL" | "COMPLETED" | "SKIPPED" | "FAILED";
 export type StepType = "THINK" | "RESEARCH" | "WRITE" | "NOTIFY";
 export type LogType = "THOUGHT" | "ACTION" | "OBSERVATION" | "ERROR";
 
@@ -106,5 +106,21 @@ export interface ExecutionCompletedEvent {
 export interface ExecutionFailedEvent {
   executionId: { value: string };
   reason: string;
+  timestamp: string;
+}
+
+export interface StepAwaitingApprovalEvent {
+  executionId: { value: string };
+  stepId: { value: string };
+  name: string;
+  stepType: StepType;
+  timestamp: string;
+}
+
+export interface StepApprovalDecidedEvent {
+  executionId: { value: string };
+  stepId: { value: string };
+  approved: boolean;
+  reason: string | null;
   timestamp: string;
 }

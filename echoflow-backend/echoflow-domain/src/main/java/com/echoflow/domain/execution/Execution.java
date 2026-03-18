@@ -85,7 +85,7 @@ public class Execution {
      * Complete the currently running step with output.
      */
     public void completeStep(StepId stepId, String output) {
-        requireRunning();
+        requireRunningOrWaiting();
         findStep(stepId).markCompleted(output);
     }
 
@@ -93,23 +93,23 @@ public class Execution {
      * Fail the currently running step.
      */
     public void failStep(StepId stepId, String reason) {
-        requireRunning();
+        requireRunningOrWaiting();
         findStep(stepId).markFailed(reason);
     }
 
     /**
-     * Skip the currently running step (degradation).
+     * Skip a step (degradation or human rejection).
      */
     public void skipStep(StepId stepId, String reason) {
-        requireRunning();
+        requireRunningOrWaiting();
         findStep(stepId).markSkipped(reason);
     }
 
     /**
-     * Append a log entry to a running step.
+     * Append a log entry to a running or waiting-approval step.
      */
     public void appendStepLog(StepId stepId, StepLog log) {
-        requireRunning();
+        requireRunningOrWaiting();
         findStep(stepId).appendLog(log);
     }
 
@@ -132,9 +132,42 @@ public class Execution {
      * Mark the entire execution as failed.
      */
     public void markFailed(Instant now) {
-        requireRunning();
+        requireRunningOrWaiting();
         this.status = ExecutionStatus.FAILED;
         this.completedAt = now;
+    }
+
+    /**
+     * Pause execution and the given step to wait for human approval.
+     */
+    public void markWaitingApproval() {
+        requireRunning();
+        this.status = ExecutionStatus.WAITING_APPROVAL;
+    }
+
+    /**
+     * Mark a specific step as waiting for approval.
+     */
+    public void markStepWaitingApproval(StepId stepId) {
+        findStep(stepId).markWaitingApproval();
+    }
+
+    /**
+     * Resume execution after human approval.
+     */
+    public void resumeRunning() {
+        if (status != ExecutionStatus.WAITING_APPROVAL) {
+            throw new IllegalExecutionStateException(
+                    "Execution " + id + " cannot resume from status " + status);
+        }
+        this.status = ExecutionStatus.RUNNING;
+    }
+
+    /**
+     * Resume a specific step after human approval.
+     */
+    public void resumeStepFromApproval(StepId stepId) {
+        findStep(stepId).resumeFromApproval();
     }
 
     /**
@@ -163,6 +196,13 @@ public class Execution {
         if (status != ExecutionStatus.RUNNING) {
             throw new IllegalExecutionStateException(
                     "Execution " + id + " is not running (status: " + status + ")");
+        }
+    }
+
+    private void requireRunningOrWaiting() {
+        if (status != ExecutionStatus.RUNNING && status != ExecutionStatus.WAITING_APPROVAL) {
+            throw new IllegalExecutionStateException(
+                    "Execution " + id + " is not running or waiting approval (status: " + status + ")");
         }
     }
 

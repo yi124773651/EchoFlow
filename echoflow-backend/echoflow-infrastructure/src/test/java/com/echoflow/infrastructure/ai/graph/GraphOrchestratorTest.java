@@ -2,6 +2,7 @@ package com.echoflow.infrastructure.ai.graph;
 
 import com.echoflow.application.execution.*;
 import com.echoflow.application.execution.GraphOrchestrationPort.StepProgressListener;
+import com.echoflow.domain.execution.ApprovalDecision;
 import com.echoflow.domain.execution.LogType;
 import com.echoflow.domain.execution.StepType;
 import org.junit.jupiter.api.BeforeEach;
@@ -34,6 +35,8 @@ class GraphOrchestratorTest {
 
     @BeforeEach
     void setUp() {
+        lenient().when(listener.onStepAwaitingApproval(any(), any()))
+                .thenReturn(ApprovalDecision.APPROVED);
         orchestrator = new GraphOrchestrator(stepExecutor, null, 3);
     }
 
