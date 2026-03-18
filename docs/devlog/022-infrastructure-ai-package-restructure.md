@@ -75,5 +75,5 @@ infrastructure/ai/
 
 ## Next Steps
 
-- 更新 CLAUDE.md 中 Infrastructure 模块的包结构描述
-- 考虑 `executor/` 中 LLM fallback 路径是否仍有必要保留（目前作为降级策略仍在使用）
+- ~~更新 CLAUDE.md 中 Infrastructure 模块的包结构描述~~ ✅ 已完成
+- ~~考虑 `executor/` 中 LLM fallback 路径是否仍有必要保留（目前作为降级策略仍在使用）~~ ✅ 已评估，决策：保留（见 devlog 023）

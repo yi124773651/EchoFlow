@@ -84,8 +84,14 @@ echoflow/                          (root aggregator pom)
 `web → application → domain` ← `infrastructure` (implements domain ports)
 
 - **Domain** (`com.echoflow.domain`): Aggregates (`Task`, `Execution`), entities (`ExecutionStep`), value objects (`TaskId`, `StepLog`, enums), repository interfaces. No Spring, no JPA, no HTTP.
-- **Application** (`com.echoflow.application`): Use cases (`SubmitTaskUseCase`, `ExecuteTaskUseCase`), port interfaces (`TaskPlannerPort`, `StepExecutorPort`, `ExecutionEventPublisher`), commands/results as records. Owns transaction boundaries via `TransactionOperations` (programmatic) or `@Transactional` (declarative, only on methods called externally through Spring proxy).
-- **Infrastructure** (`com.echoflow.infrastructure`): JPA entities + repository implementations in `persistence/`, LLM executors in `ai/` (`StepExecutorRouter` routes by `StepType` to `LlmThinkExecutor`, `LlmResearchExecutor`, `LlmWriteExecutor`, `LlmNotifyExecutor`). Multi-model routing via `ChatClientProvider` (uses Spring AI `mutate()` to create per-provider ChatClients) and `MultiModelProperties` (`@ConfigurationProperties`). Only `StepExecutorRouter`, `AiTaskPlanner`, `ChatClientProvider`, and `MultiModelProperties` are public; internal executors and tools are package-private.
+- **Application** (`com.echoflow.application`): Use cases (`SubmitTaskUseCase`, `ExecuteTaskUseCase`), port interfaces (`TaskPlannerPort`, `StepExecutorPort`, `GraphOrchestrationPort`, `ExecutionEventPublisher`), commands/results as records. Owns transaction boundaries via `TransactionOperations` (programmatic) or `@Transactional` (declarative, only on methods called externally through Spring proxy).
+- **Infrastructure** (`com.echoflow.infrastructure`): JPA entities + repository implementations in `persistence/`. AI integration in `ai/` organized by responsibility:
+    - `ai/config/` — `ChatClientProvider` (per-provider ChatClients via Spring AI `mutate()`), `MultiModelProperties` (`@ConfigurationProperties` for StepType→model routing), `WriteReviewConfig`, `WriteReviewProperties`.
+    - `ai/executor/` — `StepExecutorRouter` (public, implements `StepExecutorPort`) dispatches to `ReactAgent*Executor` (primary) with automatic fallback to `Llm*Executor` (degradation). Includes `MessageTrimmingHook` and `ToolRetryInterceptor`.
+    - `ai/graph/` — `GraphOrchestrator` (public, implements `GraphOrchestrationPort`) builds StateGraph topology: linear chain, conditional parallel routing (THINK→RESEARCH fan-out/skip), and WRITE review loop (`ReviewableWriteNodeAction` → `WriteReviewGateAction` → `WriteReviseAction`).
+    - `ai/planner/` — `AiTaskPlanner` (public, implements `TaskPlannerPort`).
+    - `ai/tool/` — `GitHubSearchTool`, `WebhookNotifyTool`.
+  Public classes: `StepExecutorRouter`, `GraphOrchestrator`, `AiTaskPlanner`, `ChatClientProvider`, `MultiModelProperties`, `WriteReviewConfig`, `WriteReviewProperties`. All other classes are package-private.
 - **Web** (`com.echoflow.web`): Thin controllers, `GlobalExceptionHandler` (`@RestControllerAdvice` → `ProblemDetail`), `SseExecutionEventPublisher` (SSE streaming), `ClockConfig`. Flyway migrations in `src/main/resources/db/migration/`. Prompt templates in `src/main/resources/prompts/*.st`.
 
 ### Domain Model (two aggregate roots)
@@ -106,7 +112,9 @@ echoflow/                          (root aggregator pom)
 
 - **Port/Adapter**: Application defines port interfaces; Infrastructure implements them.
 - **SSE streaming**: `SseExecutionEventPublisher` → frontend `useExecutionStream` hook. Events include `executionId`, `type`, `timestamp`, `payload`. Polling is forbidden.
-- **LLM step routing**: `StepExecutorRouter` dispatches to type-specific executors via switch expression. `ChatClientProvider` resolves per-StepType `ChatClient` from `MultiModelProperties` routing config. Fallback: if primary model fails all retries, automatically switches to fallback model.
+- **StateGraph orchestration**: `GraphOrchestrator` builds dynamic StateGraph topologies based on planned steps. Two modes: (1) linear chain for simple plans, (2) conditional parallel routing when THINK→RESEARCH pattern is detected (fan-out/skip based on `RoutingHint` embedded in THINK output). When review is enabled, WRITE steps are wrapped with a review loop (WRITE → review_gate → revise_write backward edge).
+- **Dual-layer step execution**: `StepExecutorRouter` dispatches to `ReactAgentStepExecutor` (primary, with hooks/interceptors) → automatic fallback to `LlmStepExecutor` (degradation) if primary fails. Each StepType has dedicated executor subclasses in both layers.
+- **Multi-model routing**: `ChatClientProvider` resolves per-StepType `ChatClient` from `MultiModelProperties` routing config. Supports per-step model selection and automatic fallback to a different model.
 - **JPA ↔ Domain mapping**: JPA entities (`TaskEntity`, `ExecutionEntity`) are separate from domain models; explicit mapping in repository implementations.
 
 ## 5. Architecture Rules
