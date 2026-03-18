@@ -59,6 +59,18 @@ class ReviewableWriteNodeAction implements AsyncNodeAction {
     public CompletableFuture<Map<String, Object>> apply(OverAllState state) {
         listener.onStepStarting(stepName, stepType);
 
+        // Human approval gate (default: auto-approve, no-op)
+        var decision = listener.onStepAwaitingApproval(stepName, stepType);
+        if (!decision.approved()) {
+            log.info("WRITE step '{}' rejected by user: {}", stepName, decision.reason());
+            listener.onStepSkipped(stepName, "Rejected: " + decision.reason());
+
+            var stateUpdate = new HashMap<String, Object>();
+            stateUpdate.put(STATE_KEY_WRITE_OUTPUT, "");
+            stateUpdate.put(STATE_KEY_REVIEW_DECISION, "approve");
+            return CompletableFuture.completedFuture(stateUpdate);
+        }
+
         var taskDescription = state.<String>value(StepNodeAction.STATE_KEY_TASK_DESCRIPTION).orElse("");
         var previousOutputs = readPreviousOutputs(state);
         var context = new StepExecutionContext(taskDescription, stepName, stepType, previousOutputs);

@@ -10,6 +10,8 @@ import java.util.List;
  *
  * <p>Steps are owned by the Execution aggregate and transition through:
  * {@code PENDING → RUNNING → COMPLETED / SKIPPED / FAILED}.
+ * When human approval is enabled, WRITE steps may pause:
+ * {@code RUNNING → WAITING_APPROVAL → RUNNING}.
  * Each step accumulates append-only {@link StepLog} entries.</p>
  */
 public class ExecutionStep {
@@ -52,6 +54,22 @@ public class ExecutionStep {
     }
 
     /**
+     * Pause this step to wait for human approval.
+     */
+    void markWaitingApproval() {
+        requireStatus(StepStatus.RUNNING, StepStatus.WAITING_APPROVAL);
+        this.status = StepStatus.WAITING_APPROVAL;
+    }
+
+    /**
+     * Resume this step after human approval.
+     */
+    void resumeFromApproval() {
+        requireStatus(StepStatus.WAITING_APPROVAL, StepStatus.RUNNING);
+        this.status = StepStatus.RUNNING;
+    }
+
+    /**
      * Complete this step with output.
      */
     void markCompleted(String output) {
@@ -70,10 +88,12 @@ public class ExecutionStep {
     }
 
     /**
-     * Skip this step (e.g. LLM degradation after retry exhaustion).
+     * Skip this step (e.g. LLM degradation or human rejection).
      */
     void markSkipped(String reason) {
-        if (this.status != StepStatus.PENDING && this.status != StepStatus.RUNNING) {
+        if (this.status != StepStatus.PENDING
+                && this.status != StepStatus.RUNNING
+                && this.status != StepStatus.WAITING_APPROVAL) {
             throw new IllegalExecutionStateException(
                     "Step " + id + " cannot transition from " + status + " to SKIPPED");
         }
@@ -82,10 +102,10 @@ public class ExecutionStep {
     }
 
     /**
-     * Append a log entry. Only allowed while RUNNING.
+     * Append a log entry. Allowed while RUNNING or WAITING_APPROVAL.
      */
     void appendLog(StepLog log) {
-        if (this.status != StepStatus.RUNNING) {
+        if (this.status != StepStatus.RUNNING && this.status != StepStatus.WAITING_APPROVAL) {
             throw new IllegalExecutionStateException(
                     "Cannot append log to step " + id + " in status " + status);
         }

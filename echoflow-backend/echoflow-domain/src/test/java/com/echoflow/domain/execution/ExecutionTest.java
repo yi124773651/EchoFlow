@@ -280,6 +280,113 @@ class ExecutionTest {
         assertThat(step2.status()).isEqualTo(StepStatus.RUNNING);
     }
 
+    // --- Human Approval (Step level) ---
+
+    @Test
+    void step_transitions_to_waiting_approval_from_running() {
+        var exec = aRunningExecution();
+        var step = exec.startNextStep();
+
+        exec.markWaitingApproval();
+        step.markWaitingApproval();
+
+        assertThat(step.status()).isEqualTo(StepStatus.WAITING_APPROVAL);
+    }
+
+    @Test
+    void step_resumes_from_waiting_approval_to_running() {
+        var exec = aRunningExecution();
+        var step = exec.startNextStep();
+        exec.markWaitingApproval();
+        step.markWaitingApproval();
+        step.resumeFromApproval();
+        exec.resumeRunning();
+
+        assertThat(step.status()).isEqualTo(StepStatus.RUNNING);
+        assertThat(exec.status()).isEqualTo(ExecutionStatus.RUNNING);
+    }
+
+    @Test
+    void step_waiting_approval_can_be_skipped_on_rejection() {
+        var exec = aRunningExecution();
+        var step = exec.startNextStep();
+        exec.markWaitingApproval();
+        step.markWaitingApproval();
+
+        exec.skipStep(step.id(), "Rejected by user");
+
+        assertThat(step.status()).isEqualTo(StepStatus.SKIPPED);
+        assertThat(step.output()).isEqualTo("Rejected by user");
+    }
+
+    @Test
+    void step_waiting_approval_from_pending_throws() {
+        var exec = aRunningExecution();
+        var step = exec.steps().getFirst();
+        assertThatThrownBy(step::markWaitingApproval)
+                .isInstanceOf(IllegalExecutionStateException.class);
+    }
+
+    @Test
+    void step_appendLog_allowed_during_waiting_approval() {
+        var exec = aRunningExecution();
+        var step = exec.startNextStep();
+        exec.markWaitingApproval();
+        step.markWaitingApproval();
+
+        var log = new StepLog(LogType.ACTION, "Awaiting human approval", NOW);
+        exec.appendStepLog(step.id(), log);
+
+        assertThat(step.logs()).hasSize(1);
+    }
+
+    // --- Human Approval (Execution level) ---
+
+    @Test
+    void execution_transitions_to_waiting_approval_from_running() {
+        var exec = aRunningExecution();
+        exec.markWaitingApproval();
+        assertThat(exec.status()).isEqualTo(ExecutionStatus.WAITING_APPROVAL);
+    }
+
+    @Test
+    void execution_resumes_running_from_waiting_approval() {
+        var exec = aRunningExecution();
+        exec.markWaitingApproval();
+        exec.resumeRunning();
+        assertThat(exec.status()).isEqualTo(ExecutionStatus.RUNNING);
+    }
+
+    @Test
+    void execution_resume_from_running_throws() {
+        var exec = aRunningExecution();
+        assertThatThrownBy(exec::resumeRunning)
+                .isInstanceOf(IllegalExecutionStateException.class);
+    }
+
+    @Test
+    void execution_markFailed_allowed_during_waiting_approval() {
+        var exec = aRunningExecution();
+        exec.markWaitingApproval();
+        exec.markFailed(LATER);
+        assertThat(exec.status()).isEqualTo(ExecutionStatus.FAILED);
+    }
+
+    // --- ApprovalDecision ---
+
+    @Test
+    void approvalDecision_approved_constant() {
+        assertThat(ApprovalDecision.APPROVED.approved()).isTrue();
+        assertThat(ApprovalDecision.APPROVED.reason()).isNull();
+    }
+
+    @Test
+    void approvalDecision_rejected_factory() {
+        var decision = ApprovalDecision.rejected("内容不符合要求");
+        assertThat(decision.approved()).isFalse();
+        assertThat(decision.reason()).isEqualTo("内容不符合要求");
+    }
+
     // --- Helpers ---
 
     private Execution aPlanningExecution() {

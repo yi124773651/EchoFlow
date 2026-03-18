@@ -8,6 +8,8 @@ import type {
   StepCompletedEvent,
   ExecutionCompletedEvent,
   ExecutionFailedEvent,
+  StepAwaitingApprovalEvent,
+  StepApprovalDecidedEvent,
   ExecutionSnapshot,
   LogType,
 } from "@/types/task";
@@ -18,14 +20,14 @@ export type StepState = {
   order: number;
   name: string;
   type: string;
-  status: "PENDING" | "RUNNING" | "COMPLETED" | "SKIPPED" | "FAILED";
+  status: "PENDING" | "RUNNING" | "WAITING_APPROVAL" | "COMPLETED" | "SKIPPED" | "FAILED";
   output: string | null;
   logs: { type: LogType; content: string; timestamp: string }[];
 };
 
 export type ExecutionState = {
   executionId: string | null;
-  status: "IDLE" | "RUNNING" | "COMPLETED" | "FAILED";
+  status: "IDLE" | "RUNNING" | "WAITING_APPROVAL" | "COMPLETED" | "FAILED";
   steps: StepState[];
   error: string | null;
 };
@@ -40,7 +42,7 @@ const initialState: ExecutionState = {
 function snapshotToState(exec: ExecutionSnapshot): ExecutionState {
   return {
     executionId: exec.executionId.value,
-    status: exec.status === "PLANNING" ? "RUNNING" : exec.status as ExecutionState["status"],
+    status: exec.status === "PLANNING" ? "RUNNING" : (exec.status as ExecutionState["status"]),
     error: null,
     steps: exec.steps.map((s) => ({
       stepId: s.stepId.value,
@@ -84,7 +86,7 @@ export function useExecutionStream(taskId: string | null) {
         setState(loaded);
 
         // Only connect SSE if execution is still in progress
-        if (detail.execution.status === "RUNNING" || detail.execution.status === "PLANNING") {
+        if (detail.execution.status === "RUNNING" || detail.execution.status === "PLANNING" || detail.execution.status === "WAITING_APPROVAL") {
           connectSse(taskId);
         }
       } else {
@@ -182,6 +184,32 @@ export function useExecutionStream(taskId: string | null) {
           steps: prev.steps.map((s) =>
             s.stepId === data.stepId.value
               ? { ...s, status: "SKIPPED", output: data.reason }
+              : s,
+          ),
+        }));
+      });
+
+      es.addEventListener("StepAwaitingApproval", (e) => {
+        const data: StepAwaitingApprovalEvent = JSON.parse(e.data);
+        setState((prev) => ({
+          ...prev,
+          status: "WAITING_APPROVAL",
+          steps: prev.steps.map((s) =>
+            s.stepId === data.stepId.value
+              ? { ...s, status: "WAITING_APPROVAL" }
+              : s,
+          ),
+        }));
+      });
+
+      es.addEventListener("StepApprovalDecided", (e) => {
+        const data: StepApprovalDecidedEvent = JSON.parse(e.data);
+        setState((prev) => ({
+          ...prev,
+          status: "RUNNING",
+          steps: prev.steps.map((s) =>
+            s.stepId === data.stepId.value
+              ? { ...s, status: data.approved ? "RUNNING" : "SKIPPED" }
               : s,
           ),
         }));

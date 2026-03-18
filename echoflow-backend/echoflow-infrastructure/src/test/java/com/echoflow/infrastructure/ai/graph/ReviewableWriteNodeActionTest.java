@@ -7,6 +7,7 @@ import com.echoflow.application.execution.StepExecutionException;
 import com.echoflow.application.execution.StepExecutorPort;
 import com.echoflow.application.execution.StepOutput;
 import com.echoflow.application.execution.TaskPlannerPort;
+import com.echoflow.domain.execution.ApprovalDecision;
 import com.echoflow.domain.execution.StepType;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -40,6 +41,7 @@ class ReviewableWriteNodeActionTest {
     void first_entry_fires_onStepStarting_and_stores_output() throws Exception {
         var step = new TaskPlannerPort.PlannedStep("撰写", StepType.WRITE);
         var action = new ReviewableWriteNodeAction(step, stepExecutor, listener);
+        when(listener.onStepAwaitingApproval(any(), any())).thenReturn(ApprovalDecision.APPROVED);
         when(stepExecutor.execute(any())).thenReturn(new StepOutput("# Draft Report"));
 
         var state = createState("test task");
@@ -55,6 +57,7 @@ class ReviewableWriteNodeActionTest {
     void degradation_fires_onStepSkipped_and_sets_auto_approve() throws Exception {
         var step = new TaskPlannerPort.PlannedStep("撰写", StepType.WRITE);
         var action = new ReviewableWriteNodeAction(step, stepExecutor, listener);
+        when(listener.onStepAwaitingApproval(any(), any())).thenReturn(ApprovalDecision.APPROVED);
         when(stepExecutor.execute(any())).thenThrow(new StepExecutionException("LLM timeout"));
 
         var state = createState("test task");
@@ -71,6 +74,7 @@ class ReviewableWriteNodeActionTest {
     void fatal_error_fires_onStepFailed_and_returns_failed_future() throws Exception {
         var step = new TaskPlannerPort.PlannedStep("撰写", StepType.WRITE);
         var action = new ReviewableWriteNodeAction(step, stepExecutor, listener);
+        when(listener.onStepAwaitingApproval(any(), any())).thenReturn(ApprovalDecision.APPROVED);
         when(stepExecutor.execute(any())).thenThrow(new RuntimeException("fatal NPE"));
 
         var state = createState("test task");

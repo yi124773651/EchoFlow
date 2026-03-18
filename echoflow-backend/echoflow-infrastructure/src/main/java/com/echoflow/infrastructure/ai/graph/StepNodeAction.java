@@ -55,6 +55,14 @@ class StepNodeAction implements AsyncNodeAction {
     public CompletableFuture<Map<String, Object>> apply(OverAllState state) {
         listener.onStepStarting(stepName, stepType);
 
+        // Human approval gate (default: auto-approve, no-op)
+        var decision = listener.onStepAwaitingApproval(stepName, stepType);
+        if (!decision.approved()) {
+            log.info("Step '{}' rejected by user: {}", stepName, decision.reason());
+            listener.onStepSkipped(stepName, "Rejected: " + decision.reason());
+            return CompletableFuture.completedFuture(Map.of());
+        }
+
         var taskDescription = state.<String>value(STATE_KEY_TASK_DESCRIPTION).orElse("");
         var previousOutputs = readPreviousOutputs(state);
         var context = new StepExecutionContext(taskDescription, stepName, stepType, previousOutputs);

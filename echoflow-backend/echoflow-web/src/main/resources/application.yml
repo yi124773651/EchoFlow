@@ -56,6 +56,9 @@ echoflow:
     enabled: false
     max-attempts: 3
     quality-threshold: 80
+  approval:
+    enabled: false
+    timeout-minutes: 30
 
 management:
   endpoints:

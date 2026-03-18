@@ -38,4 +38,12 @@ public sealed interface ExecutionEvent {
     record ExecutionCompleted(ExecutionId executionId, Instant timestamp) implements ExecutionEvent {}
 
     record ExecutionFailed(ExecutionId executionId, String reason, Instant timestamp) implements ExecutionEvent {}
+
+    record StepAwaitingApproval(ExecutionId executionId, StepId stepId,
+                                String name, StepType stepType,
+                                Instant timestamp) implements ExecutionEvent {}
+
+    record StepApprovalDecided(ExecutionId executionId, StepId stepId,
+                               boolean approved, String reason,
+                               Instant timestamp) implements ExecutionEvent {}
 }

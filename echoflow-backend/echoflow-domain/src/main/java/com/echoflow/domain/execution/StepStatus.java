@@ -6,6 +6,7 @@ package com.echoflow.domain.execution;
 public enum StepStatus {
     PENDING,
     RUNNING,
+    WAITING_APPROVAL,
     COMPLETED,
     SKIPPED,
     FAILED

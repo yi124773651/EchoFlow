@@ -17,6 +17,8 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.transaction.support.TransactionOperations;
 
+import com.echoflow.domain.execution.ApprovalDecision;
+
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
@@ -43,6 +45,7 @@ class ExecuteTaskUseCaseTest {
     @Mock private GraphOrchestrationPort graphOrchestrator;
 
     private final List<ExecutionEvent> publishedEvents = Collections.synchronizedList(new ArrayList<>());
+    private final ApprovalGateService approvalGateService = new ApprovalGateService();
     private ExecuteTaskUseCase useCase;
 
     @BeforeEach
@@ -52,8 +55,8 @@ class ExecuteTaskUseCaseTest {
         ExecutionEventPublisher publisher = publishedEvents::add;
         useCase = new ExecuteTaskUseCase(
                 taskRepository, executionRepository, publisher,
-                taskPlanner, graphOrchestrator, clock,
-                TransactionOperations.withoutTransaction());
+                taskPlanner, graphOrchestrator, approvalGateService, clock,
+                TransactionOperations.withoutTransaction(), false, 30);
     }
 
     @Test
@@ -357,5 +360,140 @@ class ExecuteTaskUseCaseTest {
         assertThat(logEvents.get(1).content()).contains("score 65/100");
         assertThat(logEvents.get(2).logType()).isEqualTo(LogType.ACTION);
         assertThat(logEvents.get(2).content()).contains("Revising draft");
+    }
+
+    // --- Human Approval ---
+
+    @Test
+    void execute_pauses_at_write_step_and_resumes_on_approval() {
+        var approvalUseCase = createApprovalEnabledUseCase();
+        var taskId = TaskId.generate();
+        var task = Task.submit(taskId, "approval test", NOW);
+        when(taskRepository.findById(taskId)).thenReturn(Optional.of(task));
+        when(taskPlanner.planSteps("approval test")).thenReturn(List.of(
+                new TaskPlannerPort.PlannedStep("分析", StepType.THINK),
+                new TaskPlannerPort.PlannedStep("撰写", StepType.WRITE)
+        ));
+
+        doAnswer(invocation -> {
+            StepProgressListener listener = invocation.getArgument(2);
+            listener.onStepStarting("分析", StepType.THINK);
+            listener.onStepCompleted("分析", "分析结果");
+            listener.onStepStarting("撰写", StepType.WRITE);
+            // This triggers the approval gate — run in a separate thread
+            // to simulate the blocking behavior
+            var decision = listener.onStepAwaitingApproval("撰写", StepType.WRITE);
+            if (decision.approved()) {
+                listener.onStepCompleted("撰写", "报告内容");
+            }
+            return null;
+        }).when(graphOrchestrator).executeSteps(any(), any(), any());
+
+        // Approve from another thread after a short delay
+        Thread.startVirtualThread(() -> {
+            try { Thread.sleep(50); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+            approvalGateService.decide(
+                    publishedEvents.stream()
+                            .filter(e -> e instanceof ExecutionEvent.StepAwaitingApproval)
+                            .map(e -> ((ExecutionEvent.StepAwaitingApproval) e).executionId())
+                            .findFirst()
+                            .orElseThrow(),
+                    ApprovalDecision.APPROVED);
+        });
+
+        approvalUseCase.execute(taskId);
+
+        assertThat(task.status()).isEqualTo(TaskStatus.COMPLETED);
+
+        var eventTypes = publishedEvents.stream()
+                .map(e -> e.getClass().getSimpleName())
+                .toList();
+        assertThat(eventTypes).contains("StepAwaitingApproval", "StepApprovalDecided");
+    }
+
+    @Test
+    void execute_skips_write_step_on_rejection() {
+        var approvalUseCase = createApprovalEnabledUseCase();
+        var taskId = TaskId.generate();
+        var task = Task.submit(taskId, "reject test", NOW);
+        when(taskRepository.findById(taskId)).thenReturn(Optional.of(task));
+        when(taskPlanner.planSteps("reject test")).thenReturn(List.of(
+                new TaskPlannerPort.PlannedStep("撰写", StepType.WRITE),
+                new TaskPlannerPort.PlannedStep("通知", StepType.NOTIFY)
+        ));
+
+        doAnswer(invocation -> {
+            StepProgressListener listener = invocation.getArgument(2);
+            listener.onStepStarting("撰写", StepType.WRITE);
+            var decision = listener.onStepAwaitingApproval("撰写", StepType.WRITE);
+            if (decision.approved()) {
+                listener.onStepCompleted("撰写", "报告");
+            } else {
+                listener.onStepSkipped("撰写", "Rejected: " + decision.reason());
+            }
+            listener.onStepStarting("通知", StepType.NOTIFY);
+            listener.onStepCompleted("通知", "已通知");
+            return null;
+        }).when(graphOrchestrator).executeSteps(any(), any(), any());
+
+        // Reject from another thread
+        Thread.startVirtualThread(() -> {
+            try { Thread.sleep(50); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+            approvalGateService.decide(
+                    publishedEvents.stream()
+                            .filter(e -> e instanceof ExecutionEvent.StepAwaitingApproval)
+                            .map(e -> ((ExecutionEvent.StepAwaitingApproval) e).executionId())
+                            .findFirst()
+                            .orElseThrow(),
+                    ApprovalDecision.rejected("不合格"));
+        });
+
+        approvalUseCase.execute(taskId);
+
+        assertThat(task.status()).isEqualTo(TaskStatus.COMPLETED);
+
+        var eventTypes = publishedEvents.stream()
+                .map(e -> e.getClass().getSimpleName())
+                .toList();
+        assertThat(eventTypes).contains("StepAwaitingApproval", "StepApprovalDecided", "StepSkipped");
+    }
+
+    @Test
+    void execute_auto_approves_non_write_steps() {
+        var approvalUseCase = createApprovalEnabledUseCase();
+        var taskId = TaskId.generate();
+        var task = Task.submit(taskId, "non-write test", NOW);
+        when(taskRepository.findById(taskId)).thenReturn(Optional.of(task));
+        when(taskPlanner.planSteps("non-write test")).thenReturn(List.of(
+                new TaskPlannerPort.PlannedStep("分析", StepType.THINK)
+        ));
+
+        doAnswer(invocation -> {
+            StepProgressListener listener = invocation.getArgument(2);
+            listener.onStepStarting("分析", StepType.THINK);
+            // THINK should auto-approve even with approval enabled
+            var decision = listener.onStepAwaitingApproval("分析", StepType.THINK);
+            assertThat(decision).isEqualTo(ApprovalDecision.APPROVED);
+            listener.onStepCompleted("分析", "结果");
+            return null;
+        }).when(graphOrchestrator).executeSteps(any(), any(), any());
+
+        approvalUseCase.execute(taskId);
+
+        assertThat(task.status()).isEqualTo(TaskStatus.COMPLETED);
+        // No StepAwaitingApproval event for non-WRITE steps
+        assertThat(publishedEvents.stream()
+                .filter(e -> e instanceof ExecutionEvent.StepAwaitingApproval)
+                .count()).isZero();
+    }
+
+    private ExecuteTaskUseCase createApprovalEnabledUseCase() {
+        var clock = Clock.fixed(NOW, ZoneOffset.UTC);
+        ExecutionEventPublisher publisher = publishedEvents::add;
+        return new ExecuteTaskUseCase(
+                taskRepository, executionRepository, publisher,
+                taskPlanner, graphOrchestrator, approvalGateService, clock,
+                TransactionOperations.withoutTransaction(),
+                true, 1);
     }
 }

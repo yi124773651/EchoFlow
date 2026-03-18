@@ -13,4 +13,10 @@ export const taskService = {
     const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "/api";
     return new EventSource(`${API_BASE}/tasks/${taskId}/execution/stream`);
   },
+
+  approveStep: (taskId: string) =>
+    api.post<void>(`/tasks/${taskId}/execution/approve`),
+
+  rejectStep: (taskId: string, reason?: string) =>
+    api.post<void>(`/tasks/${taskId}/execution/reject`, reason ? { reason } : undefined),
 };

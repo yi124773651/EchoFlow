@@ -1,13 +1,15 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useExecutionStream, type StepState } from "@/hooks/use-execution-stream";
+import { taskService } from "@/services/task-service";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 const STATUS_ICON: Record<string, string> = {
   PENDING: "\u25CB",   // ○
   RUNNING: "\u25D4",   // ◔
+  WAITING_APPROVAL: "\u23F8",  // ⏸
   COMPLETED: "\u25CF", // ●
   SKIPPED: "\u26A0",   // ⚠
   FAILED: "\u2716",    // ✖
@@ -20,17 +22,30 @@ const LOG_PREFIX: Record<string, string> = {
   ERROR: "\u274C",            // ❌
 };
 
-function StepCard({ step }: { step: StepState }) {
+function StepCard({ step, taskId }: { step: StepState; taskId: string }) {
+  const [approving, setApproving] = useState(false);
   const statusColor =
     step.status === "COMPLETED"
       ? "text-green-600"
       : step.status === "RUNNING"
         ? "text-blue-600"
-        : step.status === "FAILED"
-          ? "text-red-600"
-          : step.status === "SKIPPED"
-            ? "text-yellow-600"
-            : "text-muted-foreground";
+        : step.status === "WAITING_APPROVAL"
+          ? "text-amber-600"
+          : step.status === "FAILED"
+            ? "text-red-600"
+            : step.status === "SKIPPED"
+              ? "text-yellow-600"
+              : "text-muted-foreground";
+
+  async function handleApprove() {
+    setApproving(true);
+    try { await taskService.approveStep(taskId); } finally { setApproving(false); }
+  }
+
+  async function handleReject() {
+    setApproving(true);
+    try { await taskService.rejectStep(taskId); } finally { setApproving(false); }
+  }
 
   return (
     <div className="rounded-lg border border-border p-4">
@@ -84,6 +99,26 @@ function StepCard({ step }: { step: StepState }) {
           </p>
         </div>
       )}
+
+      {step.status === "WAITING_APPROVAL" && (
+        <div className="mt-3 pl-7 flex items-center gap-2">
+          <span className="text-xs text-amber-600">等待审批:</span>
+          <button
+            className="px-3 py-1 bg-green-600 hover:bg-green-700 text-white rounded text-xs disabled:opacity-50"
+            onClick={handleApprove}
+            disabled={approving}
+          >
+            批准执行
+          </button>
+          <button
+            className="px-3 py-1 bg-red-600 hover:bg-red-700 text-white rounded text-xs disabled:opacity-50"
+            onClick={handleReject}
+            disabled={approving}
+          >
+            拒绝跳过
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -118,7 +153,9 @@ export function ExecutionTimeline({ taskId, onDone }: { taskId: string; onDone?:
               ? "text-green-600"
               : execution.status === "FAILED"
                 ? "text-red-600"
-                : "text-blue-600"
+                : execution.status === "WAITING_APPROVAL"
+                  ? "text-amber-600"
+                  : "text-blue-600"
           }
         >
           {execution.status}
@@ -133,7 +170,7 @@ export function ExecutionTimeline({ taskId, onDone }: { taskId: string; onDone?:
 
       <div className="space-y-2">
         {execution.steps.map((step) => (
-          <StepCard key={step.stepId} step={step} />
+          <StepCard key={step.stepId} step={step} taskId={taskId} />
         ))}
       </div>
     </div>

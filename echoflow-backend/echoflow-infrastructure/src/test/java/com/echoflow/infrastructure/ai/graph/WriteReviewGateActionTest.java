@@ -3,7 +3,9 @@ package com.echoflow.infrastructure.ai.graph;
 import com.alibaba.cloud.ai.graph.KeyStrategy;
 import com.alibaba.cloud.ai.graph.OverAllState;
 import com.echoflow.application.execution.GraphOrchestrationPort.StepProgressListener;
+import com.echoflow.domain.execution.ApprovalDecision;
 import com.echoflow.domain.execution.LogType;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
@@ -19,6 +21,12 @@ class WriteReviewGateActionTest {
 
     @Mock private LlmWriteReviewer reviewer;
     @Mock private StepProgressListener listener;
+
+    @BeforeEach
+    void setUp() {
+        lenient().when(listener.onStepAwaitingApproval(any(), any()))
+                .thenReturn(ApprovalDecision.APPROVED);
+    }
 
     private OverAllState createState(String writeOutput, int attempts) {
         var state = new OverAllState();
