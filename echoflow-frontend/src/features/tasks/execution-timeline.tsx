@@ -1,8 +1,10 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useExecutionStream, type StepState } from "@/hooks/use-execution-stream";
+import { useExecutionStream, type StepState, type ExecutionState } from "@/hooks/use-execution-stream";
 import { taskService } from "@/services/task-service";
+import { Collapsible } from "@base-ui/react/collapsible";
+import { ChevronRight } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
@@ -22,8 +24,27 @@ const LOG_PREFIX: Record<string, string> = {
   ERROR: "\u274C",            // ❌
 };
 
+function shouldAutoExpand(status: StepState["status"]): boolean {
+  return status === "RUNNING" || status === "WAITING_APPROVAL" || status === "FAILED";
+}
+
 function StepCard({ step, taskId }: { step: StepState; taskId: string }) {
   const [approving, setApproving] = useState(false);
+  const [manualOverride, setManualOverride] = useState<boolean | null>(null);
+  const prevStatusRef = useRef(step.status);
+
+  // Reset manual override when step status changes so auto-rules take over
+  useEffect(() => {
+    if (prevStatusRef.current !== step.status) {
+      setManualOverride(null);
+      prevStatusRef.current = step.status;
+    }
+  }, [step.status]);
+
+  const autoExpand = shouldAutoExpand(step.status);
+  const isOpen = manualOverride ?? autoExpand;
+  const hasContent = step.logs.length > 0 || step.output != null || step.status === "WAITING_APPROVAL";
+
   const statusColor =
     step.status === "COMPLETED"
       ? "text-green-600"
@@ -48,92 +69,111 @@ function StepCard({ step, taskId }: { step: StepState; taskId: string }) {
   }
 
   return (
-    <div className="rounded-lg border border-border p-4">
-      <div className="flex items-center gap-2">
-        <span className={`text-lg ${statusColor}`}>
-          {STATUS_ICON[step.status] ?? "?"}
-        </span>
-        <span className="font-medium text-sm">{step.name}</span>
-        <span className="ml-auto text-xs text-muted-foreground uppercase">
-          {step.type}
-        </span>
-      </div>
-
-      {step.logs.length > 0 && (
-        <div className="mt-3 space-y-1 pl-7">
-          {step.logs.map((log, i) => (
-            <div key={i} className="flex items-start gap-2 text-xs">
-              <span>{LOG_PREFIX[log.type] ?? "?"}</span>
-              <span className="text-muted-foreground">{log.content}</span>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {step.output && step.status === "COMPLETED" && (
-        <div className="mt-3 pl-7">
-          {step.type === "WRITE" ? (
-            <div className="prose prose-sm prose-neutral dark:prose-invert max-w-none max-h-96 overflow-y-auto rounded border border-border p-3">
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                {step.output}
-              </ReactMarkdown>
-            </div>
-          ) : (
-            <pre className="text-xs bg-muted rounded p-2 whitespace-pre-wrap overflow-x-auto max-h-40">
-              {step.output}
-            </pre>
+    <Collapsible.Root
+      open={isOpen}
+      onOpenChange={(open) => setManualOverride(open)}
+    >
+      <div className="rounded-lg border border-border">
+        <Collapsible.Trigger className="flex items-center gap-2 w-full p-4 text-left hover:bg-muted/50 transition-colors">
+          <span className={`text-lg ${statusColor}`}>
+            {STATUS_ICON[step.status] ?? "?"}
+          </span>
+          <span className="font-medium text-sm">{step.name}</span>
+          <span className="ml-auto text-xs text-muted-foreground uppercase">
+            {step.type}
+          </span>
+          {hasContent && (
+            <ChevronRight
+              className={`h-4 w-4 text-muted-foreground transition-transform ${isOpen ? "rotate-90" : ""}`}
+            />
           )}
-        </div>
-      )}
+        </Collapsible.Trigger>
 
-      {step.output && step.status === "FAILED" && (
-        <div className="mt-3 pl-7">
-          <p className="text-xs text-red-600">{step.output}</p>
-        </div>
-      )}
+        <Collapsible.Panel>
+          <div className="px-4 pb-4">
+            {step.logs.length > 0 && (
+              <div className="space-y-1 pl-7">
+                {step.logs.map((log, i) => (
+                  <div key={i} className="flex items-start gap-2 text-xs">
+                    <span>{LOG_PREFIX[log.type] ?? "?"}</span>
+                    <span className="text-muted-foreground">{log.content}</span>
+                  </div>
+                ))}
+              </div>
+            )}
 
-      {step.output && step.status === "SKIPPED" && (
-        <div className="mt-3 pl-7">
-          <p className="text-xs text-yellow-600">
-            {"\u26A0"} 此步骤已降级跳过: {step.output}
-          </p>
-        </div>
-      )}
+            {step.output && step.status === "COMPLETED" && (
+              <div className="mt-3 pl-7">
+                {step.type === "WRITE" ? (
+                  <div className="prose prose-sm prose-neutral dark:prose-invert max-w-none max-h-96 overflow-y-auto rounded border border-border p-3">
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                      {step.output}
+                    </ReactMarkdown>
+                  </div>
+                ) : (
+                  <pre className="text-xs bg-muted rounded p-2 whitespace-pre-wrap overflow-x-auto max-h-40">
+                    {step.output}
+                  </pre>
+                )}
+              </div>
+            )}
 
-      {step.status === "WAITING_APPROVAL" && (
-        <div className="mt-3 pl-7 flex items-center gap-2">
-          <span className="text-xs text-amber-600">等待审批:</span>
-          <button
-            className="px-3 py-1 bg-green-600 hover:bg-green-700 text-white rounded text-xs disabled:opacity-50"
-            onClick={handleApprove}
-            disabled={approving}
-          >
-            批准执行
-          </button>
-          <button
-            className="px-3 py-1 bg-red-600 hover:bg-red-700 text-white rounded text-xs disabled:opacity-50"
-            onClick={handleReject}
-            disabled={approving}
-          >
-            拒绝跳过
-          </button>
-        </div>
-      )}
-    </div>
+            {step.output && step.status === "FAILED" && (
+              <div className="mt-3 pl-7">
+                <p className="text-xs text-red-600">{step.output}</p>
+              </div>
+            )}
+
+            {step.output && step.status === "SKIPPED" && (
+              <div className="mt-3 pl-7">
+                <p className="text-xs text-yellow-600">
+                  {"\u26A0"} 此步骤已降级跳过: {step.output}
+                </p>
+              </div>
+            )}
+
+            {step.status === "WAITING_APPROVAL" && (
+              <div className="mt-3 pl-7 flex items-center gap-2">
+                <span className="text-xs text-amber-600">等待审批:</span>
+                <button
+                  className="px-3 py-1 bg-green-600 hover:bg-green-700 text-white rounded text-xs disabled:opacity-50"
+                  onClick={handleApprove}
+                  disabled={approving}
+                >
+                  批准执行
+                </button>
+                <button
+                  className="px-3 py-1 bg-red-600 hover:bg-red-700 text-white rounded text-xs disabled:opacity-50"
+                  onClick={handleReject}
+                  disabled={approving}
+                >
+                  拒绝跳过
+                </button>
+              </div>
+            )}
+          </div>
+        </Collapsible.Panel>
+      </div>
+    </Collapsible.Root>
   );
 }
 
-export function ExecutionTimeline({ taskId, onDone }: { taskId: string; onDone?: () => void }) {
+export function ExecutionTimeline({
+  taskId,
+  onStatusChange,
+}: {
+  taskId: string;
+  onStatusChange?: (taskId: string, status: ExecutionState["status"]) => void;
+}) {
   const execution = useExecutionStream(taskId);
   const prevStatusRef = useRef(execution.status);
 
   useEffect(() => {
-    const prev = prevStatusRef.current;
-    prevStatusRef.current = execution.status;
-    if (prev !== execution.status && (execution.status === "COMPLETED" || execution.status === "FAILED")) {
-      onDone?.();
+    if (prevStatusRef.current !== execution.status) {
+      prevStatusRef.current = execution.status;
+      onStatusChange?.(taskId, execution.status);
     }
-  }, [execution.status, onDone]);
+  }, [execution.status, taskId, onStatusChange]);
 
   if (execution.status === "IDLE") {
     return (

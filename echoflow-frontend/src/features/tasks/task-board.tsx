@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import type { TaskDto } from "@/types/task";
+import type { TaskDto, TaskStatus } from "@/types/task";
+import type { ExecutionState } from "@/hooks/use-execution-stream";
 import { taskService } from "@/services/task-service";
 import { TaskSubmitForm } from "@/features/tasks/task-submit-form";
 import { ExecutionTimeline } from "@/features/tasks/execution-timeline";
@@ -18,6 +19,12 @@ const STATUS_COLOR: Record<string, string> = {
   EXECUTING: "bg-blue-100 text-blue-800",
   COMPLETED: "bg-green-100 text-green-800",
   FAILED: "bg-red-100 text-red-800",
+};
+
+const EXEC_TO_TASK_STATUS: Partial<Record<ExecutionState["status"], TaskStatus>> = {
+  RUNNING: "EXECUTING",
+  COMPLETED: "COMPLETED",
+  FAILED: "FAILED",
 };
 
 export function TaskBoard() {
@@ -40,16 +47,28 @@ export function TaskBoard() {
     loadTasks();
   }, [loadTasks]);
 
-  function handleTaskCreated(taskId: string) {
-    setSelectedTaskId(taskId);
-    // Immediately add the new task to the list optimistically, then reload
+  function handleTaskCreated(task: TaskDto) {
+    setSelectedTaskId(task.id);
+    // Optimistic insert at top, then refresh
+    setTasks((prev) => [task, ...prev.filter((t) => t.id !== task.id)]);
     loadTasks();
   }
 
-  function handleExecutionDone() {
-    // Refresh task list when execution completes to update status badges
-    loadTasks();
-  }
+  const handleStatusChange = useCallback(
+    (taskId: string, execStatus: ExecutionState["status"]) => {
+      const newTaskStatus = EXEC_TO_TASK_STATUS[execStatus];
+      if (newTaskStatus) {
+        setTasks((prev) =>
+          prev.map((t) => (t.id === taskId ? { ...t, status: newTaskStatus } : t)),
+        );
+      }
+      // Full refresh on terminal states
+      if (execStatus === "COMPLETED" || execStatus === "FAILED") {
+        loadTasks();
+      }
+    },
+    [loadTasks],
+  );
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 w-full max-w-6xl">
@@ -104,7 +123,7 @@ export function TaskBoard() {
       <div>
         <h2 className="text-lg font-semibold mb-3">执行详情</h2>
         {selectedTaskId ? (
-          <ExecutionTimeline taskId={selectedTaskId} onDone={handleExecutionDone} />
+          <ExecutionTimeline taskId={selectedTaskId} onStatusChange={handleStatusChange} />
         ) : (
           <p className="text-sm text-muted-foreground">
             选择一个任务查看执行详情

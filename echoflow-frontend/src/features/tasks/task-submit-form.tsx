@@ -1,13 +1,14 @@
 "use client";
 
 import { useState } from "react";
+import type { TaskDto } from "@/types/task";
 import { taskService } from "@/services/task-service";
 import { Button } from "@/components/ui/button";
 
 export function TaskSubmitForm({
   onCreated,
 }: {
-  onCreated: (taskId: string) => void;
+  onCreated: (task: TaskDto) => void;
 }) {
   const [description, setDescription] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -22,7 +23,7 @@ export function TaskSubmitForm({
     try {
       const task = await taskService.create(description.trim());
       setDescription("");
-      onCreated(task.id);
+      onCreated(task);
     } catch (err) {
       setError(err instanceof Error ? err.message : "提交失败");
     } finally {
