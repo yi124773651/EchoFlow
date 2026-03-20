@@ -6,6 +6,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * Execution aggregate root — represents one run of an agent pipeline for a Task.
@@ -190,6 +191,24 @@ public class Execution {
      */
     public boolean hasPendingSteps() {
         return steps.stream().anyMatch(s -> s.status() == StepStatus.PENDING);
+    }
+
+    /**
+     * Find the step currently in WAITING_APPROVAL status, if any.
+     */
+    public Optional<ExecutionStep> findWaitingApprovalStep() {
+        return steps.stream()
+                .filter(s -> s.status() == StepStatus.WAITING_APPROVAL)
+                .findFirst();
+    }
+
+    /**
+     * Get all steps still in PENDING status (not yet executed).
+     */
+    public List<ExecutionStep> pendingSteps() {
+        return steps.stream()
+                .filter(s -> s.status() == StepStatus.PENDING)
+                .toList();
     }
 
     private void requireRunning() {

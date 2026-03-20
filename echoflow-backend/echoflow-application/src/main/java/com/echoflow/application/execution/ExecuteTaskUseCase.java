@@ -12,9 +12,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.time.Clock;
-import java.time.Instant;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 
 /**
  * Use case: execute a submitted task through a pipeline of steps.
@@ -129,12 +126,8 @@ public class ExecuteTaskUseCase {
      * Phase 2: Execute steps via StateGraph (linear or parallel fan-out).
      *
      * <p>Delegates to {@link GraphOrchestrationPort} which drives execution via
-     * StateGraph. The {@link GraphOrchestrationPort.StepProgressListener} callback
-     * performs domain model updates and event publishing at each step boundary.</p>
-     *
-     * <p>When RESEARCH steps run in parallel, callbacks fire from multiple threads.
-     * All callback bodies synchronize on {@code execution} to serialize domain
-     * model mutations and database saves, preventing race conditions.</p>
+     * StateGraph. The {@link ExecutionProgressListener} callback performs domain
+     * model updates and event publishing at each step boundary.</p>
      */
     private void runExecution(Execution execution) {
         var task = taskRepository.findById(execution.taskId())
@@ -146,109 +139,17 @@ public class ExecuteTaskUseCase {
                 .map(s -> new TaskPlannerPort.PlannedStep(s.name(), s.type()))
                 .toList();
 
+        var listener = ExecutionProgressListener.forNormalExecution(
+                execution, executionRepository, eventPublisher,
+                approvalGateService, clock, approvalEnabled, approvalTimeoutMinutes);
+
         try {
-            graphOrchestrator.executeSteps(taskDescription, plannedSteps,
-                    new GraphOrchestrationPort.StepProgressListener() {
-
-                        @Override
-                        public void onStepStarting(String stepName, StepType stepType) {
-                            synchronized (execution) {
-                                var step = execution.startStepByName(stepName);
-                                eventPublisher.publish(new ExecutionEvent.StepStarted(
-                                        execution.id(), step.id(), step.name(), clock.instant()));
-                                appendLog(execution, step.id(), LogType.ACTION,
-                                        "Executing: " + step.name(), clock.instant());
-                            }
-                        }
-
-                        @Override
-                        public void onStepCompleted(String stepName, String output) {
-                            synchronized (execution) {
-                                var step = findStepByName(execution, stepName);
-                                appendLog(execution, step.id(), LogType.OBSERVATION,
-                                        output, clock.instant());
-                                completeStep(execution, step.id(), output);
-                            }
-                        }
-
-                        @Override
-                        public void onStepSkipped(String stepName, String reason) {
-                            synchronized (execution) {
-                                var step = findStepByName(execution, stepName);
-                                appendLog(execution, step.id(), LogType.ERROR,
-                                        "Step degraded: " + reason, clock.instant());
-                                skipStep(execution, step.id(), reason);
-                            }
-                        }
-
-                        @Override
-                        public void onStepFailed(String stepName, String reason) {
-                            synchronized (execution) {
-                                var step = findStepByName(execution, stepName);
-                                appendLog(execution, step.id(), LogType.ERROR,
-                                        reason, clock.instant());
-                                failStep(execution, step.id(), reason);
-                            }
-                        }
-
-                        @Override
-                        public void onStepProgress(String stepName, LogType logType, String content) {
-                            synchronized (execution) {
-                                var step = findStepByName(execution, stepName);
-                                appendLog(execution, step.id(), logType, content, clock.instant());
-                            }
-                        }
-
-                        @Override
-                        public ApprovalDecision onStepAwaitingApproval(String stepName, StepType stepType) {
-                            if (!approvalEnabled || stepType != StepType.WRITE) {
-                                return ApprovalDecision.APPROVED;
-                            }
-                            return waitForApproval(execution, stepName);
-                        }
-                    });
-
+            graphOrchestrator.executeSteps(execution.id(), taskDescription,
+                    plannedSteps, listener);
             completeExecution(execution);
         } catch (Exception e) {
             failExecution(execution, e.getMessage());
         }
-    }
-
-    private ExecutionStep findStepByName(Execution execution, String stepName) {
-        return execution.steps().stream()
-                .filter(s -> s.name().equals(stepName))
-                .findFirst()
-                .orElseThrow(() -> new IllegalStateException(
-                        "Step '" + stepName + "' not found in execution " + execution.id()));
-    }
-
-    private void appendLog(Execution execution, StepId stepId, LogType type, String content, Instant now) {
-        var log = new StepLog(type, content, now);
-        execution.appendStepLog(stepId, log);
-        saveExecution(execution);
-        eventPublisher.publish(new ExecutionEvent.StepLogAppended(
-                execution.id(), stepId, type, content, now));
-    }
-
-    private void completeStep(Execution execution, StepId stepId, String output) {
-        execution.completeStep(stepId, output);
-        executionRepository.save(execution);
-        eventPublisher.publish(new ExecutionEvent.StepCompleted(
-                execution.id(), stepId, output, clock.instant()));
-    }
-
-    private void failStep(Execution execution, StepId stepId, String reason) {
-        execution.failStep(stepId, reason);
-        executionRepository.save(execution);
-        eventPublisher.publish(new ExecutionEvent.StepFailed(
-                execution.id(), stepId, reason, clock.instant()));
-    }
-
-    private void skipStep(Execution execution, StepId stepId, String reason) {
-        execution.skipStep(stepId, reason);
-        executionRepository.save(execution);
-        eventPublisher.publish(new ExecutionEvent.StepSkipped(
-                execution.id(), stepId, reason, clock.instant()));
     }
 
     private void completeExecution(Execution execution) {
@@ -268,67 +169,7 @@ public class ExecuteTaskUseCase {
         eventPublisher.publish(new ExecutionEvent.ExecutionCompleted(execution.id(), now));
     }
 
-    /**
-     * Block the virtual thread until the user approves or rejects the step.
-     */
-    private ApprovalDecision waitForApproval(Execution execution, String stepName) {
-        synchronized (execution) {
-            var step = findStepByName(execution, stepName);
-            execution.markStepWaitingApproval(step.id());
-            execution.markWaitingApproval();
-            saveExecution(execution);
-
-            appendLog(execution, step.id(), LogType.ACTION,
-                    "Awaiting human approval", clock.instant());
-            eventPublisher.publish(new ExecutionEvent.StepAwaitingApproval(
-                    execution.id(), step.id(), stepName, step.type(), clock.instant()));
-        }
-
-        try {
-            var gate = approvalGateService.createGate(execution.id());
-            var decision = gate.get(approvalTimeoutMinutes, TimeUnit.MINUTES);
-
-            synchronized (execution) {
-                var step = findStepByName(execution, stepName);
-                execution.resumeStepFromApproval(step.id());
-                execution.resumeRunning();
-                saveExecution(execution);
-
-                appendLog(execution, step.id(), LogType.ACTION,
-                        decision.approved()
-                                ? "Approved by user"
-                                : "Rejected by user: " + decision.reason(),
-                        clock.instant());
-                eventPublisher.publish(new ExecutionEvent.StepApprovalDecided(
-                        execution.id(), step.id(), decision.approved(),
-                        decision.reason(), clock.instant()));
-            }
-            return decision;
-        } catch (TimeoutException e) {
-            log.warn("Approval timeout for execution {}, auto-approving", execution.id());
-            approvalGateService.cancel(execution.id());
-            synchronized (execution) {
-                var step = findStepByName(execution, stepName);
-                execution.resumeStepFromApproval(step.id());
-                execution.resumeRunning();
-                saveExecution(execution);
-            }
-            return ApprovalDecision.APPROVED;
-        } catch (Exception e) {
-            log.warn("Approval gate error for execution {}, auto-approving: {}",
-                    execution.id(), e.getMessage());
-            approvalGateService.cancel(execution.id());
-            synchronized (execution) {
-                var step = findStepByName(execution, stepName);
-                execution.resumeStepFromApproval(step.id());
-                execution.resumeRunning();
-                saveExecution(execution);
-            }
-            return ApprovalDecision.APPROVED;
-        }
-    }
-
-    private void failExecution(Execution execution, String reason) {
+    void failExecution(Execution execution, String reason) {
         approvalGateService.cancel(execution.id());
         var now = clock.instant();
         execution.markFailed(now);
@@ -342,9 +183,5 @@ public class ExecuteTaskUseCase {
         });
 
         eventPublisher.publish(new ExecutionEvent.ExecutionFailed(execution.id(), reason, now));
-    }
-
-    private void saveExecution(Execution execution) {
-        executionRepository.save(execution);
     }
 }

@@ -2,6 +2,7 @@ package com.echoflow.domain.execution;
 
 import com.echoflow.domain.task.TaskId;
 
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -15,4 +16,6 @@ public interface ExecutionRepository {
     Optional<Execution> findById(ExecutionId id);
 
     Optional<Execution> findByTaskId(TaskId taskId);
+
+    List<Execution> findByStatus(ExecutionStatus status);
 }

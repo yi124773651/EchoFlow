@@ -7,13 +7,15 @@ import com.alibaba.cloud.ai.graph.action.AsyncEdgeAction;
 import com.alibaba.cloud.ai.graph.action.AsyncMultiCommandAction;
 import com.alibaba.cloud.ai.graph.action.AsyncNodeAction;
 import com.alibaba.cloud.ai.graph.checkpoint.config.SaverConfig;
-import com.alibaba.cloud.ai.graph.checkpoint.savers.MemorySaver;
 import com.alibaba.cloud.ai.graph.exception.GraphStateException;
 import com.echoflow.application.execution.GraphOrchestrationPort;
 import com.echoflow.application.execution.StepExecutorPort;
 import com.echoflow.application.execution.TaskPlannerPort;
+import com.echoflow.domain.execution.ExecutionId;
 import com.echoflow.domain.execution.StepType;
 import com.echoflow.infrastructure.ai.config.WriteReviewProperties;
+import com.echoflow.infrastructure.persistence.checkpoint.CheckpointJpaRepository;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
@@ -66,38 +68,65 @@ public class GraphOrchestrator implements GraphOrchestrationPort {
     private final StepExecutorPort stepExecutor;
     private final LlmWriteReviewer writeReviewer;
     private final int maxAttempts;
+    private final CheckpointJpaRepository checkpointRepo;
+    private final ObjectMapper objectMapper;
 
     @Autowired
     public GraphOrchestrator(StepExecutorPort stepExecutor,
                               ObjectProvider<LlmWriteReviewer> writeReviewerProvider,
-                              WriteReviewProperties reviewProperties) {
+                              WriteReviewProperties reviewProperties,
+                              CheckpointJpaRepository checkpointRepo,
+                              ObjectMapper objectMapper) {
         this(stepExecutor,
              writeReviewerProvider.getIfAvailable(),
-             reviewProperties.maxAttempts());
+             reviewProperties.maxAttempts(),
+             checkpointRepo,
+             objectMapper);
     }
 
     GraphOrchestrator(StepExecutorPort stepExecutor,
                        LlmWriteReviewer writeReviewer,
-                       int maxAttempts) {
+                       int maxAttempts,
+                       CheckpointJpaRepository checkpointRepo,
+                       ObjectMapper objectMapper) {
         this.stepExecutor = stepExecutor;
         this.writeReviewer = writeReviewer;
         this.maxAttempts = maxAttempts;
+        this.checkpointRepo = checkpointRepo;
+        this.objectMapper = objectMapper;
     }
 
     @Override
-    public void executeSteps(String taskDescription,
+    public void executeSteps(ExecutionId executionId,
+                             String taskDescription,
                              List<TaskPlannerPort.PlannedStep> steps,
                              StepProgressListener listener) {
         if (steps.isEmpty()) {
             return;
         }
 
+        var threadId = executionId.value().toString();
         try {
             var graph = buildGraph(steps, listener);
             var compiled = compileGraph(graph);
-            compiled.invoke(Map.of(StepNodeAction.STATE_KEY_TASK_DESCRIPTION, taskDescription));
+            var config = com.alibaba.cloud.ai.graph.RunnableConfig.builder()
+                    .threadId(threadId)
+                    .build();
+            compiled.invoke(Map.of(StepNodeAction.STATE_KEY_TASK_DESCRIPTION, taskDescription), config);
         } catch (GraphStateException e) {
             throw new IllegalStateException("Failed to build/compile StateGraph", e);
+        } finally {
+            releaseCheckpoints(executionId);
+        }
+    }
+
+    @Override
+    public void releaseCheckpoints(ExecutionId executionId) {
+        try {
+            checkpointRepo.deleteByThreadId(executionId.value().toString());
+        } catch (Exception e) {
+            log.warn("Failed to release checkpoints for execution {}: {}",
+                    executionId, e.getMessage());
         }
     }
 
@@ -309,8 +338,9 @@ public class GraphOrchestrator implements GraphOrchestrationPort {
     }
 
     private com.alibaba.cloud.ai.graph.CompiledGraph compileGraph(StateGraph graph) throws GraphStateException {
+        var saver = new JpaCheckpointSaver(checkpointRepo, objectMapper);
         var saverConfig = SaverConfig.builder()
-                .register(MemorySaver.builder().build())
+                .register(saver)
                 .build();
 
         return graph.compile(CompileConfig.builder()

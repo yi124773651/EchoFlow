@@ -1,6 +1,7 @@
 package com.echoflow.application.execution;
 
 import com.echoflow.domain.execution.ApprovalDecision;
+import com.echoflow.domain.execution.ExecutionId;
 import com.echoflow.domain.execution.LogType;
 import com.echoflow.domain.execution.StepType;
 
@@ -26,14 +27,21 @@ public interface GraphOrchestrationPort {
      * allowing the caller to perform domain model updates and event publishing
      * at the same timing as the original while-loop.</p>
      *
+     * @param executionId     unique execution identifier, used as checkpoint thread ID
      * @param taskDescription the user's original task description
      * @param steps           ordered list of planned steps
      * @param listener        callback for step lifecycle events
      * @throws Exception if a step fails fatally (non-degradation)
      */
-    void executeSteps(String taskDescription,
+    void executeSteps(ExecutionId executionId,
+                      String taskDescription,
                       List<TaskPlannerPort.PlannedStep> steps,
                       StepProgressListener listener);
+
+    /**
+     * Release persisted checkpoints for an execution (cleanup after completion/failure).
+     */
+    default void releaseCheckpoints(ExecutionId executionId) {}
 
     /**
      * Callback interface for step lifecycle events during graph execution.

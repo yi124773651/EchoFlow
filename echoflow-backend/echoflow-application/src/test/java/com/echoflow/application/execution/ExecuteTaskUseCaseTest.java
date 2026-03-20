@@ -110,17 +110,17 @@ class ExecuteTaskUseCaseTest {
 
         // Simulate graph execution: each step completes
         doAnswer(invocation -> {
-            StepProgressListener listener = invocation.getArgument(2);
+            StepProgressListener listener = invocation.getArgument(3);
             listener.onStepStarting("分析需求", StepType.THINK);
             listener.onStepCompleted("分析需求", "执行结果");
             listener.onStepStarting("搜索资料", StepType.RESEARCH);
             listener.onStepCompleted("搜索资料", "执行结果");
             return null;
-        }).when(graphOrchestrator).executeSteps(eq("调研 Java Agent"), any(), any());
+        }).when(graphOrchestrator).executeSteps(any(), eq("调研 Java Agent"), any(), any());
 
         useCase.execute(taskId);
 
-        verify(graphOrchestrator).executeSteps(eq("调研 Java Agent"), any(), any());
+        verify(graphOrchestrator).executeSteps(any(), eq("调研 Java Agent"), any(), any());
     }
 
     @Test
@@ -134,13 +134,13 @@ class ExecuteTaskUseCaseTest {
         ));
 
         doAnswer(invocation -> {
-            StepProgressListener listener = invocation.getArgument(2);
+            StepProgressListener listener = invocation.getArgument(3);
             listener.onStepStarting("思考", StepType.THINK);
             listener.onStepCompleted("思考", "执行结果");
             listener.onStepStarting("调研", StepType.RESEARCH);
             listener.onStepCompleted("调研", "执行结果");
             return null;
-        }).when(graphOrchestrator).executeSteps(any(), any(), any());
+        }).when(graphOrchestrator).executeSteps(any(), any(), any(), any());
 
         useCase.execute(taskId);
 
@@ -168,11 +168,11 @@ class ExecuteTaskUseCaseTest {
         ));
 
         doAnswer(invocation -> {
-            StepProgressListener listener = invocation.getArgument(2);
+            StepProgressListener listener = invocation.getArgument(3);
             listener.onStepStarting("分析", StepType.THINK);
             listener.onStepFailed("分析", "unexpected NPE");
             throw new RuntimeException("unexpected NPE");
-        }).when(graphOrchestrator).executeSteps(any(), any(), any());
+        }).when(graphOrchestrator).executeSteps(any(), any(), any(), any());
 
         useCase.execute(taskId);
 
@@ -194,7 +194,7 @@ class ExecuteTaskUseCaseTest {
         ));
 
         doAnswer(invocation -> {
-            StepProgressListener listener = invocation.getArgument(2);
+            StepProgressListener listener = invocation.getArgument(3);
             listener.onStepStarting("分析", StepType.THINK);
             listener.onStepCompleted("分析", "分析结果");
             listener.onStepStarting("调研", StepType.RESEARCH);
@@ -202,7 +202,7 @@ class ExecuteTaskUseCaseTest {
             listener.onStepStarting("撰写", StepType.WRITE);
             listener.onStepCompleted("撰写", "报告内容");
             return null;
-        }).when(graphOrchestrator).executeSteps(any(), any(), any());
+        }).when(graphOrchestrator).executeSteps(any(), any(), any(), any());
 
         useCase.execute(taskId);
 
@@ -228,11 +228,11 @@ class ExecuteTaskUseCaseTest {
         ));
 
         doAnswer(invocation -> {
-            StepProgressListener listener = invocation.getArgument(2);
+            StepProgressListener listener = invocation.getArgument(3);
             listener.onStepStarting("分析", StepType.THINK);
             listener.onStepCompleted("分析", "分析结果");
             return null;
-        }).when(graphOrchestrator).executeSteps(any(), any(), any());
+        }).when(graphOrchestrator).executeSteps(any(), any(), any(), any());
 
         useCase.execute(taskId);
 
@@ -278,7 +278,7 @@ class ExecuteTaskUseCaseTest {
 
         // Simulate parallel RESEARCH callbacks from two threads
         doAnswer(invocation -> {
-            StepProgressListener listener = invocation.getArgument(2);
+            StepProgressListener listener = invocation.getArgument(3);
 
             // THINK runs first (sequential)
             listener.onStepStarting("分析", StepType.THINK);
@@ -307,7 +307,7 @@ class ExecuteTaskUseCaseTest {
             listener.onStepStarting("撰写", StepType.WRITE);
             listener.onStepCompleted("撰写", "报告");
             return null;
-        }).when(graphOrchestrator).executeSteps(any(), any(), any());
+        }).when(graphOrchestrator).executeSteps(any(), any(), any(), any());
 
         useCase.execute(taskId);
 
@@ -335,7 +335,7 @@ class ExecuteTaskUseCaseTest {
         ));
 
         doAnswer(invocation -> {
-            StepProgressListener listener = invocation.getArgument(2);
+            StepProgressListener listener = invocation.getArgument(3);
             listener.onStepStarting("撰写", StepType.WRITE);
             listener.onStepProgress("撰写", LogType.THOUGHT,
                     "Review: score 65/100. Needs more detail.");
@@ -343,7 +343,7 @@ class ExecuteTaskUseCaseTest {
                     "Revising draft...");
             listener.onStepCompleted("撰写", "最终报告");
             return null;
-        }).when(graphOrchestrator).executeSteps(any(), any(), any());
+        }).when(graphOrchestrator).executeSteps(any(), any(), any(), any());
 
         useCase.execute(taskId);
 
@@ -376,7 +376,7 @@ class ExecuteTaskUseCaseTest {
         ));
 
         doAnswer(invocation -> {
-            StepProgressListener listener = invocation.getArgument(2);
+            StepProgressListener listener = invocation.getArgument(3);
             listener.onStepStarting("分析", StepType.THINK);
             listener.onStepCompleted("分析", "分析结果");
             listener.onStepStarting("撰写", StepType.WRITE);
@@ -387,7 +387,7 @@ class ExecuteTaskUseCaseTest {
                 listener.onStepCompleted("撰写", "报告内容");
             }
             return null;
-        }).when(graphOrchestrator).executeSteps(any(), any(), any());
+        }).when(graphOrchestrator).executeSteps(any(), any(), any(), any());
 
         // Approve from another thread after a short delay
         Thread.startVirtualThread(() -> {
@@ -423,7 +423,7 @@ class ExecuteTaskUseCaseTest {
         ));
 
         doAnswer(invocation -> {
-            StepProgressListener listener = invocation.getArgument(2);
+            StepProgressListener listener = invocation.getArgument(3);
             listener.onStepStarting("撰写", StepType.WRITE);
             var decision = listener.onStepAwaitingApproval("撰写", StepType.WRITE);
             if (decision.approved()) {
@@ -434,7 +434,7 @@ class ExecuteTaskUseCaseTest {
             listener.onStepStarting("通知", StepType.NOTIFY);
             listener.onStepCompleted("通知", "已通知");
             return null;
-        }).when(graphOrchestrator).executeSteps(any(), any(), any());
+        }).when(graphOrchestrator).executeSteps(any(), any(), any(), any());
 
         // Reject from another thread
         Thread.startVirtualThread(() -> {
@@ -469,14 +469,14 @@ class ExecuteTaskUseCaseTest {
         ));
 
         doAnswer(invocation -> {
-            StepProgressListener listener = invocation.getArgument(2);
+            StepProgressListener listener = invocation.getArgument(3);
             listener.onStepStarting("分析", StepType.THINK);
             // THINK should auto-approve even with approval enabled
             var decision = listener.onStepAwaitingApproval("分析", StepType.THINK);
             assertThat(decision).isEqualTo(ApprovalDecision.APPROVED);
             listener.onStepCompleted("分析", "结果");
             return null;
-        }).when(graphOrchestrator).executeSteps(any(), any(), any());
+        }).when(graphOrchestrator).executeSteps(any(), any(), any(), any());
 
         approvalUseCase.execute(taskId);
 
