@@ -387,6 +387,53 @@ class ExecutionTest {
         assertThat(decision.reason()).isEqualTo("内容不符合要求");
     }
 
+    // --- findWaitingApprovalStep ---
+
+    @Test
+    void findWaitingApprovalStep_returns_empty_when_no_step_waiting() {
+        var exec = aRunningExecution();
+        assertThat(exec.findWaitingApprovalStep()).isEmpty();
+    }
+
+    @Test
+    void findWaitingApprovalStep_returns_the_waiting_step() {
+        var exec = aRunningExecution();
+        var step = exec.startNextStep();
+        exec.markWaitingApproval();
+        step.markWaitingApproval();
+
+        var found = exec.findWaitingApprovalStep();
+        assertThat(found).isPresent();
+        assertThat(found.get().id()).isEqualTo(step.id());
+    }
+
+    // --- pendingSteps ---
+
+    @Test
+    void pendingSteps_returns_all_pending() {
+        var exec = aRunningExecutionWithThreeSteps();
+        assertThat(exec.pendingSteps()).hasSize(3);
+    }
+
+    @Test
+    void pendingSteps_excludes_completed_and_running() {
+        var exec = aRunningExecutionWithThreeSteps();
+        exec.startStepByName("分析"); // RUNNING
+        exec.completeStep(exec.steps().getFirst().id(), "done"); // COMPLETED
+
+        assertThat(exec.pendingSteps()).hasSize(2);
+        assertThat(exec.pendingSteps().stream().map(ExecutionStep::name))
+                .containsExactly("搜索", "写报告");
+    }
+
+    @Test
+    void pendingSteps_returns_empty_when_all_done() {
+        var exec = aRunningExecution();
+        var step = exec.startNextStep();
+        exec.completeStep(step.id(), "done");
+        assertThat(exec.pendingSteps()).isEmpty();
+    }
+
     // --- Helpers ---
 
     private Execution aPlanningExecution() {

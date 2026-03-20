@@ -37,6 +37,11 @@ public class JpaExecutionRepository implements ExecutionRepository {
         return jpa.findByTaskId(taskId.value()).map(this::toDomain);
     }
 
+    @Override
+    public List<Execution> findByStatus(ExecutionStatus status) {
+        return jpa.findByStatus(status.name()).stream().map(this::toDomain).toList();
+    }
+
     private ExecutionEntity toEntity(Execution exec) {
         var entity = new ExecutionEntity(
                 exec.id().value(),
