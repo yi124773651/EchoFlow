@@ -20,6 +20,7 @@ public class SseExecutionEventPublisher implements ExecutionEventPublisher {
 
     private final Map<TaskId, SseEmitter> emitters = new ConcurrentHashMap<>();
     private final Map<ExecutionId, TaskId> executionToTask = new ConcurrentHashMap<>();
+    private final Map<TaskId, ExecutionEvent.ExecutionStarted> pendingStartEvents = new ConcurrentHashMap<>();
 
     /**
      * Register an SSE emitter for a specific task.
@@ -27,9 +28,23 @@ public class SseExecutionEventPublisher implements ExecutionEventPublisher {
     public SseEmitter register(TaskId taskId) {
         var emitter = new SseEmitter(0L); // no timeout
         emitters.put(taskId, emitter);
-        emitter.onCompletion(() -> emitters.remove(taskId));
-        emitter.onTimeout(() -> emitters.remove(taskId));
-        emitter.onError(e -> emitters.remove(taskId));
+        emitter.onCompletion(() -> { emitters.remove(taskId); pendingStartEvents.remove(taskId); });
+        emitter.onTimeout(() -> { emitters.remove(taskId); pendingStartEvents.remove(taskId); });
+        emitter.onError(e -> { emitters.remove(taskId); pendingStartEvents.remove(taskId); });
+
+        // Replay pending ExecutionStarted if backend published before SSE connected
+        var pending = pendingStartEvents.remove(taskId);
+        if (pending != null) {
+            try {
+                emitter.send(SseEmitter.event()
+                        .name("ExecutionStarted")
+                        .data(pending));
+            } catch (IOException e) {
+                emitter.completeWithError(e);
+                emitters.remove(taskId);
+            }
+        }
+
         return emitter;
     }
 
@@ -38,6 +53,12 @@ public class SseExecutionEventPublisher implements ExecutionEventPublisher {
         // Track executionId → taskId from ExecutionStarted
         if (event instanceof ExecutionEvent.ExecutionStarted started) {
             executionToTask.put(started.executionId(), started.taskId());
+
+            // Buffer if emitter not yet registered (SSE race condition)
+            if (!emitters.containsKey(started.taskId())) {
+                pendingStartEvents.put(started.taskId(), started);
+                return;
+            }
         }
 
         var taskId = executionToTask.get(event.executionId());
