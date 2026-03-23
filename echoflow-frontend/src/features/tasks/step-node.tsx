@@ -139,39 +139,70 @@ export function StepNode({
 
         <Collapsible.Panel>
           <div className="pr-2">
-            <StepLogs
-              logs={step.logs.map((l) => ({ type: l.type, content: l.content }))}
-              isRunning={step.status === "RUNNING"}
-            />
+            {/* Running: show live logs */}
+            {step.status === "RUNNING" && (
+              <StepLogs
+                logs={step.logs.map((l) => ({ type: l.type, content: l.content }))}
+                isRunning
+              />
+            )}
 
+            {/* Completed output */}
             {step.output && step.status === "COMPLETED" && (
               <div className="mt-2">
                 {step.type === "WRITE" ? (
-                  <div className="prose prose-sm prose-neutral dark:prose-invert max-w-none max-h-80 overflow-y-auto rounded-md border border-border p-3">
-                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                      {step.output}
-                    </ReactMarkdown>
+                  <div className="relative">
+                    <button
+                      onClick={() => navigator.clipboard.writeText(step.output!)}
+                      className="absolute right-2 top-2 rounded-md border border-border bg-background px-2 py-1 text-xs text-muted-foreground hover:bg-muted transition-colors z-10"
+                    >
+                      复制
+                    </button>
+                    <div className="prose prose-sm prose-neutral dark:prose-invert max-w-none max-h-80 overflow-y-auto rounded-md border border-border p-3 pt-8">
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                        {step.output}
+                      </ReactMarkdown>
+                    </div>
                   </div>
                 ) : (
-                  <pre className="max-h-40 overflow-auto rounded-md bg-muted p-2 text-xs">
+                  /* THINK / RESEARCH / NOTIFY: plain text summary */
+                  <p className="text-sm text-foreground leading-relaxed">
                     {step.output}
-                  </pre>
+                  </p>
+                )}
+
+                {/* Collapsed raw logs for THINK/RESEARCH (only if logs exist) */}
+                {(step.type === "THINK" || step.type === "RESEARCH") && step.logs.length > 0 && (
+                  <details className="mt-2">
+                    <summary className="cursor-pointer text-xs text-muted-foreground hover:text-foreground transition-colors">
+                      查看详情
+                    </summary>
+                    <div className="mt-1">
+                      <StepLogs
+                        logs={step.logs.map((l) => ({ type: l.type, content: l.content }))}
+                        isRunning={false}
+                      />
+                    </div>
+                  </details>
                 )}
               </div>
             )}
 
+            {/* Failed output */}
             {step.output && step.status === "FAILED" && (
               <p className="mt-2 rounded-md bg-red-50 dark:bg-red-950/30 p-2 text-xs text-red-600 dark:text-red-400">
                 {step.output}
               </p>
             )}
 
+            {/* Skipped output */}
             {step.output && step.status === "SKIPPED" && (
               <p className="mt-2 text-xs text-muted-foreground">
                 已跳过: {step.output}
               </p>
             )}
 
+            {/* Approval buttons */}
             {step.status === "WAITING_APPROVAL" && (
               <div className="mt-3 flex items-center gap-2">
                 <Button

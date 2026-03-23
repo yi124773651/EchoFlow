@@ -16,6 +16,8 @@ export function TaskSubmitDialog({
   onCreated: (task: TaskDto) => void;
 }) {
   const [description, setDescription] = useState("");
+  const [notifyEnabled, setNotifyEnabled] = useState(false);
+  const [webhookUrl, setWebhookUrl] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -23,6 +25,8 @@ export function TaskSubmitDialog({
   useEffect(() => {
     if (open) {
       setDescription("");
+      setNotifyEnabled(false);
+      setWebhookUrl("");
       setError(null);
       // Focus textarea after paint
       requestAnimationFrame(() => textareaRef.current?.focus());
@@ -38,7 +42,10 @@ export function TaskSubmitDialog({
     setSubmitting(true);
     setError(null);
     try {
-      const task = await taskService.create(description.trim());
+      const task = await taskService.create(
+        description.trim(),
+        notifyEnabled && webhookUrl.trim() ? webhookUrl.trim() : undefined
+      );
       setDescription("");
       onCreated(task);
       onClose();
@@ -74,6 +81,29 @@ export function TaskSubmitDialog({
             className="w-full rounded-lg border border-border bg-background px-4 py-3 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring resize-none min-h-[120px]"
             disabled={submitting}
           />
+          {/* Webhook notification */}
+          <div className="space-y-2">
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={notifyEnabled}
+                onChange={(e) => setNotifyEnabled(e.target.checked)}
+                className="rounded border-border"
+                disabled={submitting}
+              />
+              完成后通知 (Webhook)
+            </label>
+            {notifyEnabled && (
+              <input
+                type="url"
+                value={webhookUrl}
+                onChange={(e) => setWebhookUrl(e.target.value)}
+                placeholder="https://example.com/webhook"
+                className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                disabled={submitting}
+              />
+            )}
+          </div>
           {error && <p className="text-sm text-destructive">{error}</p>}
           <div className="flex justify-end gap-2">
             <Button type="button" variant="ghost" onClick={onClose} disabled={submitting}>

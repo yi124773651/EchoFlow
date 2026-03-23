@@ -2,8 +2,8 @@ import { api } from "./api";
 import type { TaskDto, TaskDetailDto } from "@/types/task";
 
 export const taskService = {
-  create: (description: string) =>
-    api.post<TaskDto>("/tasks", { description }),
+  create: (description: string, webhookUrl?: string) =>
+    api.post<TaskDto>("/tasks", { description, webhookUrl }),
 
   list: () => api.get<TaskDto[]>("/tasks"),
 

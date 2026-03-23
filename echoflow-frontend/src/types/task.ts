@@ -8,6 +8,7 @@ export interface TaskDto {
   status: TaskStatus;
   createdAt: string;
   completedAt: string | null;
+  webhookUrl: string | null;
 }
 
 /** Execution status */
