@@ -57,8 +57,11 @@ function StatusDot({ status }: { status: StepState["status"] }) {
   }
 }
 
-function shouldAutoExpand(status: StepState["status"]): boolean {
-  return status === "RUNNING" || status === "WAITING_APPROVAL" || status === "FAILED";
+function shouldAutoExpand(status: StepState["status"], type: string): boolean {
+  if (status === "RUNNING" || status === "WAITING_APPROVAL" || status === "FAILED") return true;
+  // WRITE results stay expanded after completion
+  if (type === "WRITE" && status === "COMPLETED") return true;
+  return false;
 }
 
 export function StepNode({
@@ -86,7 +89,7 @@ export function StepNode({
     }
   }, [step.status]);
 
-  const autoExpand = shouldAutoExpand(step.status);
+  const autoExpand = shouldAutoExpand(step.status, step.type);
   const isOpen = manualOverride ?? autoExpand;
   const hasContent = step.logs.length > 0 || step.output != null || step.status === "WAITING_APPROVAL";
 
@@ -151,6 +154,7 @@ export function StepNode({
             {step.output && step.status === "COMPLETED" && (
               <div className="mt-2">
                 {step.type === "WRITE" ? (
+                  /* WRITE: prominently display the written result */
                   <div className="relative">
                     <button
                       onClick={() => navigator.clipboard.writeText(step.output!)}
@@ -158,32 +162,17 @@ export function StepNode({
                     >
                       复制
                     </button>
-                    <div className="prose prose-sm prose-neutral dark:prose-invert max-w-none max-h-80 overflow-y-auto rounded-md border border-border p-3 pt-8">
+                    <div className="prose prose-base prose-neutral dark:prose-invert max-w-none max-h-[70vh] overflow-y-auto rounded-md border border-border bg-muted/30 p-5 pt-10">
                       <ReactMarkdown remarkPlugins={[remarkGfm]}>
                         {step.output}
                       </ReactMarkdown>
                     </div>
                   </div>
                 ) : (
-                  /* THINK / RESEARCH / NOTIFY: plain text summary */
-                  <p className="text-sm text-foreground leading-relaxed">
+                  /* THINK / RESEARCH / NOTIFY: brief one-line summary */
+                  <p className="text-xs text-muted-foreground leading-relaxed line-clamp-2">
                     {step.output}
                   </p>
-                )}
-
-                {/* Collapsed raw logs for THINK/RESEARCH (only if logs exist) */}
-                {(step.type === "THINK" || step.type === "RESEARCH") && step.logs.length > 0 && (
-                  <details className="mt-2">
-                    <summary className="cursor-pointer text-xs text-muted-foreground hover:text-foreground transition-colors">
-                      查看详情
-                    </summary>
-                    <div className="mt-1">
-                      <StepLogs
-                        logs={step.logs.map((l) => ({ type: l.type, content: l.content }))}
-                        isRunning={false}
-                      />
-                    </div>
-                  </details>
                 )}
               </div>
             )}

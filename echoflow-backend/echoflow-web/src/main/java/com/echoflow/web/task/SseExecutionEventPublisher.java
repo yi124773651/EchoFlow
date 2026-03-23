@@ -9,7 +9,6 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.io.IOException;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -27,6 +26,11 @@ public class SseExecutionEventPublisher implements ExecutionEventPublisher {
     private final Map<TaskId, SseEmitter> emitters = new ConcurrentHashMap<>();
     private final Map<ExecutionId, TaskId> executionToTask = new ConcurrentHashMap<>();
     private final Map<TaskId, List<ExecutionEvent>> pendingEvents = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<TaskId, Object> locks = new ConcurrentHashMap<>();
+
+    private Object lockFor(TaskId taskId) {
+        return locks.computeIfAbsent(taskId, k -> new Object());
+    }
 
     /**
      * Register an SSE emitter for a specific task.
@@ -34,13 +38,20 @@ public class SseExecutionEventPublisher implements ExecutionEventPublisher {
      */
     public SseEmitter register(TaskId taskId) {
         var emitter = new SseEmitter(0L); // no timeout
-        emitters.put(taskId, emitter);
-        emitter.onCompletion(() -> { emitters.remove(taskId); pendingEvents.remove(taskId); });
-        emitter.onTimeout(() -> { emitters.remove(taskId); pendingEvents.remove(taskId); });
-        emitter.onError(e -> { emitters.remove(taskId); pendingEvents.remove(taskId); });
+        List<ExecutionEvent> pending;
+
+        // Atomically register emitter and drain pending events
+        // to prevent TOCTOU race with publish()
+        synchronized (lockFor(taskId)) {
+            emitters.put(taskId, emitter);
+            pending = pendingEvents.remove(taskId);
+        }
+
+        emitter.onCompletion(() -> { emitters.remove(taskId); pendingEvents.remove(taskId); locks.remove(taskId); });
+        emitter.onTimeout(() -> { emitters.remove(taskId); pendingEvents.remove(taskId); locks.remove(taskId); });
+        emitter.onError(e -> { emitters.remove(taskId); pendingEvents.remove(taskId); locks.remove(taskId); });
 
         // Replay ALL pending events if backend published before SSE connected
-        var pending = pendingEvents.remove(taskId);
         if (pending != null) {
             for (var event : pending) {
                 try {
@@ -70,11 +81,14 @@ public class SseExecutionEventPublisher implements ExecutionEventPublisher {
                 : executionToTask.get(event.executionId());
         if (taskId == null) return;
 
-        // Buffer if emitter not yet registered
-        if (!emitters.containsKey(taskId)) {
-            pendingEvents.computeIfAbsent(taskId, k -> Collections.synchronizedList(new ArrayList<>()))
-                    .add(event);
-            return;
+        // Atomically check emitter presence and buffer/send
+        // to prevent TOCTOU race with register()
+        synchronized (lockFor(taskId)) {
+            if (!emitters.containsKey(taskId)) {
+                pendingEvents.computeIfAbsent(taskId, k -> new ArrayList<>())
+                        .add(event);
+                return;
+            }
         }
 
         var emitter = emitters.get(taskId);
