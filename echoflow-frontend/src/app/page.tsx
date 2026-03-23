@@ -20,6 +20,7 @@ export default function Home() {
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [mobileShowDetail, setMobileShowDetail] = useState(false);
 
   const loadTasks = useCallback(async () => {
     try {
@@ -36,8 +37,14 @@ export default function Home() {
     loadTasks();
   }, [loadTasks]);
 
+  function handleSelect(taskId: string) {
+    setSelectedTaskId(taskId);
+    setMobileShowDetail(true);
+  }
+
   function handleTaskCreated(task: TaskDto) {
     setSelectedTaskId(task.id);
+    setMobileShowDetail(true);
     setTasks((prev) => [task, ...prev.filter((t) => t.id !== task.id)]);
     loadTasks();
   }
@@ -63,12 +70,14 @@ export default function Home() {
     <>
       <AppLayout
         sidebar={{ onNewTask: () => setDialogOpen(true) }}
+        mobileShowDetail={mobileShowDetail}
+        onMobileBack={() => setMobileShowDetail(false)}
         taskList={
           <TaskList
             tasks={tasks}
             loading={loading}
             selectedTaskId={selectedTaskId}
-            onSelect={setSelectedTaskId}
+            onSelect={handleSelect}
           />
         }
         detail={

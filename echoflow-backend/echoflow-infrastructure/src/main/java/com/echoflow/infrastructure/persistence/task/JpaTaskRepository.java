@@ -35,7 +35,7 @@ public class JpaTaskRepository implements TaskRepository {
 
     @Override
     public List<Task> findAll() {
-        return jpa.findAll().stream().map(this::toDomain).toList();
+        return jpa.findAllByOrderByCreatedAtDesc().stream().map(this::toDomain).toList();
     }
 
     private TaskEntity toEntity(Task task) {
