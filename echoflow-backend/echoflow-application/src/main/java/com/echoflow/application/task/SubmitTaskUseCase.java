@@ -29,8 +29,8 @@ public class SubmitTaskUseCase {
     public TaskResult execute(SubmitTaskCommand command) {
         var id = TaskId.generate();
         var now = clock.instant();
-        var task = Task.submit(id, command.description(), now);
+        var task = Task.submit(id, command.description(), now, command.webhookUrl());
         taskRepository.save(task);
-        return new TaskResult(task.id(), task.description(), task.status(), task.createdAt(), task.completedAt());
+        return new TaskResult(task.id(), task.description(), task.status(), task.createdAt(), task.completedAt(), task.webhookUrl());
     }
 }

@@ -13,5 +13,11 @@ public record TaskResult(
         String description,
         TaskStatus status,
         Instant createdAt,
-        Instant completedAt
-) {}
+        Instant completedAt,
+        String webhookUrl
+) {
+    public TaskResult(TaskId id, String description, TaskStatus status,
+                      Instant createdAt, Instant completedAt) {
+        this(id, description, status, createdAt, completedAt, null);
+    }
+}

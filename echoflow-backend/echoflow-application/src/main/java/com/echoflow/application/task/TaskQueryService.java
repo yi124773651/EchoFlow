@@ -26,7 +26,7 @@ public class TaskQueryService {
 
     public List<TaskResult> findAll() {
         return taskRepository.findAll().stream()
-                .map(t -> new TaskResult(t.id(), t.description(), t.status(), t.createdAt(), t.completedAt()))
+                .map(t -> new TaskResult(t.id(), t.description(), t.status(), t.createdAt(), t.completedAt(), t.webhookUrl()))
                 .toList();
     }
 

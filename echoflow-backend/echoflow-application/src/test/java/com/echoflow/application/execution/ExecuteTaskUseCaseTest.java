@@ -62,7 +62,7 @@ class ExecuteTaskUseCaseTest {
     @Test
     void planExecution_uses_llm_planned_steps() {
         var taskId = TaskId.generate();
-        var task = Task.submit(taskId, "调研 Java Agent 项目", NOW);
+        var task = Task.submit(taskId, "调研 Java Agent 项目", NOW, "https://example.com/hook");
         when(taskRepository.findById(taskId)).thenReturn(Optional.of(task));
         when(taskPlanner.planSteps("调研 Java Agent 项目")).thenReturn(List.of(
                 new TaskPlannerPort.PlannedStep("分析需求", StepType.THINK),
@@ -415,7 +415,7 @@ class ExecuteTaskUseCaseTest {
     void execute_skips_write_step_on_rejection() {
         var approvalUseCase = createApprovalEnabledUseCase();
         var taskId = TaskId.generate();
-        var task = Task.submit(taskId, "reject test", NOW);
+        var task = Task.submit(taskId, "reject test", NOW, "https://example.com/hook");
         when(taskRepository.findById(taskId)).thenReturn(Optional.of(task));
         when(taskPlanner.planSteps("reject test")).thenReturn(List.of(
                 new TaskPlannerPort.PlannedStep("撰写", StepType.WRITE),
@@ -485,6 +485,61 @@ class ExecuteTaskUseCaseTest {
         assertThat(publishedEvents.stream()
                 .filter(e -> e instanceof ExecutionEvent.StepAwaitingApproval)
                 .count()).isZero();
+    }
+
+    // --- Webhook / NOTIFY step management ---
+
+    @Test
+    void planExecution_appends_notify_step_when_task_has_webhookUrl() {
+        var taskId = TaskId.generate();
+        var task = Task.submit(taskId, "有 webhook 的任务", NOW, "https://example.com/hook");
+        when(taskRepository.findById(taskId)).thenReturn(Optional.of(task));
+        when(taskPlanner.planSteps("有 webhook 的任务")).thenReturn(List.of(
+                new TaskPlannerPort.PlannedStep("分析需求", StepType.THINK),
+                new TaskPlannerPort.PlannedStep("撰写报告", StepType.WRITE)
+        ));
+
+        var execution = useCase.planExecution(taskId);
+
+        // AI didn't plan NOTIFY, but webhookUrl present → auto-appended
+        assertThat(execution.steps()).hasSize(3);
+        assertThat(execution.steps().getLast().type()).isEqualTo(StepType.NOTIFY);
+        assertThat(execution.steps().getLast().name()).isEqualTo("Webhook 通知");
+    }
+
+    @Test
+    void planExecution_removes_notify_step_when_task_has_no_webhookUrl() {
+        var taskId = TaskId.generate();
+        var task = Task.submit(taskId, "无 webhook 的任务", NOW);
+        when(taskRepository.findById(taskId)).thenReturn(Optional.of(task));
+        when(taskPlanner.planSteps("无 webhook 的任务")).thenReturn(List.of(
+                new TaskPlannerPort.PlannedStep("分析需求", StepType.THINK),
+                new TaskPlannerPort.PlannedStep("撰写报告", StepType.WRITE),
+                new TaskPlannerPort.PlannedStep("通知", StepType.NOTIFY)
+        ));
+
+        var execution = useCase.planExecution(taskId);
+
+        // AI planned NOTIFY, but no webhookUrl → removed
+        assertThat(execution.steps()).hasSize(2);
+        assertThat(execution.steps().stream().noneMatch(s -> s.type() == StepType.NOTIFY)).isTrue();
+    }
+
+    @Test
+    void planExecution_keeps_notify_when_both_ai_planned_and_webhookUrl_present() {
+        var taskId = TaskId.generate();
+        var task = Task.submit(taskId, "完整任务", NOW, "https://example.com/hook");
+        when(taskRepository.findById(taskId)).thenReturn(Optional.of(task));
+        when(taskPlanner.planSteps("完整任务")).thenReturn(List.of(
+                new TaskPlannerPort.PlannedStep("分析", StepType.THINK),
+                new TaskPlannerPort.PlannedStep("通知", StepType.NOTIFY)
+        ));
+
+        var execution = useCase.planExecution(taskId);
+
+        // AI already planned NOTIFY + webhookUrl present → keep as-is, no duplicate
+        assertThat(execution.steps()).hasSize(2);
+        assertThat(execution.steps().stream().filter(s -> s.type() == StepType.NOTIFY).count()).isEqualTo(1);
     }
 
     private ExecuteTaskUseCase createApprovalEnabledUseCase() {
