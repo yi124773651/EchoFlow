@@ -129,6 +129,33 @@ class TaskTest {
         assertThat(new TaskId(uuid)).isEqualTo(new TaskId(uuid));
     }
 
+    // --- Webhook URL ---
+
+    @Test
+    void submit_with_webhookUrl_stores_it() {
+        var task = Task.submit(TaskId.generate(), "任务描述", NOW, "https://example.com/hook");
+        assertThat(task.webhookUrl()).isEqualTo("https://example.com/hook");
+    }
+
+    @Test
+    void submit_without_webhookUrl_defaults_to_null() {
+        var task = Task.submit(TaskId.generate(), "任务描述", NOW);
+        assertThat(task.webhookUrl()).isNull();
+    }
+
+    @Test
+    void submit_with_blank_webhookUrl_normalizes_to_null() {
+        var task = Task.submit(TaskId.generate(), "任务描述", NOW, "   ");
+        assertThat(task.webhookUrl()).isNull();
+    }
+
+    @Test
+    void reconstitute_preserves_webhookUrl() {
+        var id = TaskId.generate();
+        var task = Task.reconstitute(id, "描述", TaskStatus.SUBMITTED, NOW, null, "https://example.com/hook");
+        assertThat(task.webhookUrl()).isEqualTo("https://example.com/hook");
+    }
+
     // --- Helpers ---
 
     private Task aSubmittedTask() {

@@ -1,0 +1,1 @@
+ALTER TABLE task ADD COLUMN webhook_url VARCHAR(500);

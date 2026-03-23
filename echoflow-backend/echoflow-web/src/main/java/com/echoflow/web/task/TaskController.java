@@ -43,7 +43,7 @@ public class TaskController {
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
     public TaskResponse create(@Valid @RequestBody CreateTaskRequest request) {
-        var command = new SubmitTaskCommand(request.description());
+        var command = new SubmitTaskCommand(request.description(), request.webhookUrl());
         var result = submitTaskUseCase.execute(command);
 
         // Trigger async execution on a virtual thread

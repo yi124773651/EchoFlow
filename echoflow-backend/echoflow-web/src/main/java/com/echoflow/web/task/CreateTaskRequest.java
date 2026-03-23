@@ -7,5 +7,6 @@ import jakarta.validation.constraints.NotBlank;
  */
 public record CreateTaskRequest(
         @NotBlank(message = "description must not be blank")
-        String description
+        String description,
+        String webhookUrl
 ) {}

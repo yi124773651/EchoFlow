@@ -162,7 +162,7 @@ class EndToEndSmokeTest extends AbstractSmokeTest {
 
     private String createTask(String description) {
         var response = restTemplate.postForEntity(
-                "/api/tasks", new CreateTaskRequest(description), TaskResponse.class);
+                "/api/tasks", new CreateTaskRequest(description, null), TaskResponse.class);
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CREATED);
         assertThat(response.getBody()).isNotNull();
         return response.getBody().id();

@@ -12,6 +12,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.time.Clock;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * Use case: execute a submitted task through a pipeline of steps.
@@ -92,6 +94,9 @@ public class ExecuteTaskUseCase {
         if (plannedSteps.isEmpty()) {
             throw new TaskPlanningException("LLM returned zero steps for task: " + taskId);
         }
+
+        // Post-process: adjust NOTIFY step based on webhookUrl
+        plannedSteps = adjustNotifyStep(plannedSteps, task.webhookUrl());
 
         // Prepare domain objects in memory
         var now = clock.instant();
@@ -183,5 +188,27 @@ public class ExecuteTaskUseCase {
         });
 
         eventPublisher.publish(new ExecutionEvent.ExecutionFailed(execution.id(), reason, now));
+    }
+
+    /**
+     * Adjust NOTIFY step based on webhookUrl presence:
+     * - webhookUrl present + no NOTIFY → append one
+     * - webhookUrl absent + NOTIFY exists → remove it
+     * - both present → keep as-is
+     */
+    private List<TaskPlannerPort.PlannedStep> adjustNotifyStep(
+            List<TaskPlannerPort.PlannedStep> steps, String webhookUrl) {
+        boolean hasNotify = steps.stream().anyMatch(s -> s.type() == StepType.NOTIFY);
+        boolean hasWebhook = webhookUrl != null;
+
+        if (hasWebhook && !hasNotify) {
+            var result = new ArrayList<>(steps);
+            result.add(new TaskPlannerPort.PlannedStep("Webhook 通知", StepType.NOTIFY));
+            return result;
+        }
+        if (!hasWebhook && hasNotify) {
+            return steps.stream().filter(s -> s.type() != StepType.NOTIFY).toList();
+        }
+        return steps;
     }
 }

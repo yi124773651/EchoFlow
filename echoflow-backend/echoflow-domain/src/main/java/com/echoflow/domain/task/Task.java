@@ -13,25 +13,35 @@ public class Task {
 
     private final TaskId id;
     private final String description;
+    private final String webhookUrl;
     private TaskStatus status;
     private final Instant createdAt;
     private Instant completedAt;
 
-    private Task(TaskId id, String description, TaskStatus status, Instant createdAt) {
+    private Task(TaskId id, String description, TaskStatus status, Instant createdAt, String webhookUrl) {
         this.id = id;
         this.description = description;
         this.status = status;
         this.createdAt = createdAt;
+        this.webhookUrl = webhookUrl;
     }
 
     /**
-     * Factory: submit a new task.
+     * Factory: submit a new task without webhook.
      */
     public static Task submit(TaskId id, String description, Instant now) {
+        return submit(id, description, now, null);
+    }
+
+    /**
+     * Factory: submit a new task with optional webhook URL.
+     */
+    public static Task submit(TaskId id, String description, Instant now, String webhookUrl) {
         if (description == null || description.isBlank()) {
             throw new IllegalArgumentException("Task description must not be blank");
         }
-        return new Task(id, description.strip(), TaskStatus.SUBMITTED, now);
+        var normalizedUrl = (webhookUrl != null && !webhookUrl.isBlank()) ? webhookUrl.strip() : null;
+        return new Task(id, description.strip(), TaskStatus.SUBMITTED, now, normalizedUrl);
     }
 
     /**
@@ -70,7 +80,12 @@ public class Task {
 
     public static Task reconstitute(TaskId id, String description, TaskStatus status,
                                     Instant createdAt, Instant completedAt) {
-        var task = new Task(id, description, status, createdAt);
+        return reconstitute(id, description, status, createdAt, completedAt, null);
+    }
+
+    public static Task reconstitute(TaskId id, String description, TaskStatus status,
+                                    Instant createdAt, Instant completedAt, String webhookUrl) {
+        var task = new Task(id, description, status, createdAt, webhookUrl);
         task.completedAt = completedAt;
         return task;
     }
@@ -95,5 +110,9 @@ public class Task {
 
     public Instant completedAt() {
         return completedAt;
+    }
+
+    public String webhookUrl() {
+        return webhookUrl;
     }
 }
