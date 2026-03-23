@@ -1,0 +1,11 @@
+.git
+.github
+.claude
+.env
+*.md
+docs/
+echoflow-frontend/node_modules/
+echoflow-frontend/.next/
+echoflow-frontend/out/
+target/
+**/target/
