@@ -13,7 +13,8 @@ public record TaskResponse(
         String description,
         TaskStatus status,
         Instant createdAt,
-        Instant completedAt
+        Instant completedAt,
+        String webhookUrl
 ) {
     public static TaskResponse from(com.echoflow.application.task.TaskResult result) {
         return new TaskResponse(
@@ -21,7 +22,8 @@ public record TaskResponse(
                 result.description(),
                 result.status(),
                 result.createdAt(),
-                result.completedAt()
+                result.completedAt(),
+                result.webhookUrl()
         );
     }
 }

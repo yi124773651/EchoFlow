@@ -44,7 +44,8 @@ public class JpaTaskRepository implements TaskRepository {
                 task.description(),
                 task.status().name(),
                 task.createdAt(),
-                task.completedAt()
+                task.completedAt(),
+                task.webhookUrl()
         );
     }
 
@@ -54,7 +55,8 @@ public class JpaTaskRepository implements TaskRepository {
                 e.getDescription(),
                 TaskStatus.valueOf(e.getStatus()),
                 e.getCreatedAt(),
-                e.getCompletedAt()
+                e.getCompletedAt(),
+                e.getWebhookUrl()
         );
     }
 }
