@@ -36,6 +36,8 @@ public class StepExecutorRouter implements StepExecutorPort {
 
     private static final Logger log = LoggerFactory.getLogger(StepExecutorRouter.class);
 
+    private static final int RESEARCH_MAX_MODEL_CALLS = 15;
+
     private final Map<StepType, ReactAgentStepExecutor> reactExecutors;
     private final Map<StepType, LlmStepExecutor> llmExecutors;
     private final Map<StepType, ChatClient> primaryClients;
@@ -69,7 +71,8 @@ public class StepExecutorRouter implements StepExecutorPort {
                 StepType.THINK, new ReactAgentThinkExecutor(
                         primaryClients.get(StepType.THINK), thinkContent, toolRegistry.toolsFor(StepType.THINK)),
                 StepType.RESEARCH, new ReactAgentResearchExecutor(
-                        primaryClients.get(StepType.RESEARCH), researchContent, toolRegistry.toolsFor(StepType.RESEARCH)),
+                        primaryClients.get(StepType.RESEARCH), researchContent,
+                        toolRegistry.toolsFor(StepType.RESEARCH), RESEARCH_MAX_MODEL_CALLS),
                 StepType.WRITE, new ReactAgentWriteExecutor(
                         primaryClients.get(StepType.WRITE), writeContent, toolRegistry.toolsFor(StepType.WRITE)),
                 StepType.NOTIFY, new ReactAgentNotifyExecutor(

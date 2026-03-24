@@ -29,15 +29,26 @@ abstract class ReactAgentStepExecutor {
     private static final Logger log = LoggerFactory.getLogger(ReactAgentStepExecutor.class);
     static final int MAX_RETRIES = 2;
     static final int MAX_OUTPUT_LENGTH = 10_000;
+    static final int DEFAULT_MAX_MODEL_CALLS = 5;
 
     protected final ChatClient chatClient;
     protected final String promptContent;
     private final List<Object> tools;
+    private final int maxModelCalls;
 
     ReactAgentStepExecutor(ChatClient chatClient, String promptContent, List<Object> tools) {
+        this(chatClient, promptContent, tools, DEFAULT_MAX_MODEL_CALLS);
+    }
+
+    ReactAgentStepExecutor(ChatClient chatClient, String promptContent, List<Object> tools, int maxModelCalls) {
         this.chatClient = chatClient;
         this.promptContent = promptContent;
         this.tools = List.copyOf(tools);
+        this.maxModelCalls = maxModelCalls;
+    }
+
+    int maxModelCalls() {
+        return maxModelCalls;
     }
 
     /**
@@ -100,7 +111,7 @@ abstract class ReactAgentStepExecutor {
                 .name(agentName())
                 .chatClient(chatClient)
                 .hooks(
-                        ModelCallLimitHook.builder().runLimit(5).build(),
+                        ModelCallLimitHook.builder().runLimit(maxModelCalls).build(),
                         new MessageTrimmingHook(20));
         return configureAgent(builder).build();
     }

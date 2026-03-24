@@ -14,8 +14,8 @@ import java.util.List;
 class ReactAgentResearchExecutor extends ReactAgentStepExecutor {
 
     ReactAgentResearchExecutor(ChatClient chatClient, String promptContent,
-                               List<Object> tools) {
-        super(chatClient, promptContent, tools);
+                               List<Object> tools, int maxModelCalls) {
+        super(chatClient, promptContent, tools, maxModelCalls);
     }
 
     @Override

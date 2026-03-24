@@ -35,7 +35,8 @@ class ReactAgentResearchExecutorTest {
     private ChatClient chatClient;
 
     private ReactAgentResearchExecutor createExecutor(String promptContent) {
-        return new ReactAgentResearchExecutor(chatClient, promptContent, List.of()) {
+        return new ReactAgentResearchExecutor(chatClient, promptContent, List.of(),
+                ReactAgentStepExecutor.DEFAULT_MAX_MODEL_CALLS) {
             @Override
             protected ReactAgent buildAgent() {
                 return reactAgent;
@@ -101,7 +102,8 @@ class ReactAgentResearchExecutorTest {
 
     @Test
     void agent_name_is_research_executor() {
-        var executor = new ReactAgentResearchExecutor(chatClient, "prompt", List.of());
+        var executor = new ReactAgentResearchExecutor(chatClient, "prompt", List.of(),
+                ReactAgentStepExecutor.DEFAULT_MAX_MODEL_CALLS);
         assertThat(executor.agentName()).isEqualTo("research_executor");
     }
 }

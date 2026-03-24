@@ -191,6 +191,38 @@ class ReactAgentStepExecutorTest {
         }
     }
 
+    // --- maxModelCalls configuration ---
+
+    @Nested
+    class ModelCallLimit {
+
+        @Test
+        void default_maxModelCalls_is_5() {
+            var executor = createExecutor("prompt {taskDescription} {stepName} {previousContext}");
+            assertThat(executor.maxModelCalls()).isEqualTo(5);
+        }
+
+        @Test
+        void custom_maxModelCalls_is_stored() {
+            var executor = createExecutorWithMaxModelCalls("prompt", 15);
+            assertThat(executor.maxModelCalls()).isEqualTo(15);
+        }
+    }
+
+    private ReactAgentStepExecutor createExecutorWithMaxModelCalls(String promptContent, int maxModelCalls) {
+        return new ReactAgentStepExecutor(chatClient, promptContent, List.of(), maxModelCalls) {
+            @Override
+            protected String agentName() {
+                return "test_executor";
+            }
+
+            @Override
+            protected ReactAgent buildAgent() {
+                return reactAgent;
+            }
+        };
+    }
+
     // --- buildPreviousContext static method ---
 
     @Test

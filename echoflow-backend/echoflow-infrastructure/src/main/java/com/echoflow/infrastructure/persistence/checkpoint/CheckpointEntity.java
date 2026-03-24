@@ -1,6 +1,8 @@
 package com.echoflow.infrastructure.persistence.checkpoint;
 
 import jakarta.persistence.*;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 import java.time.Instant;
 import java.util.UUID;
 
@@ -20,6 +22,7 @@ public class CheckpointEntity {
     @Column(name = "next_node_id", length = 100)
     private String nextNodeId;
 
+    @JdbcTypeCode(SqlTypes.JSON)
     @Column(nullable = false, columnDefinition = "JSONB")
     private String state;
 
