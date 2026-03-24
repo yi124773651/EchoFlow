@@ -29,12 +29,14 @@ public interface GraphOrchestrationPort {
      *
      * @param executionId     unique execution identifier, used as checkpoint thread ID
      * @param taskDescription the user's original task description
+     * @param webhookUrl      per-task webhook URL (nullable, only used by NOTIFY steps)
      * @param steps           ordered list of planned steps
      * @param listener        callback for step lifecycle events
      * @throws Exception if a step fails fatally (non-degradation)
      */
     void executeSteps(ExecutionId executionId,
                       String taskDescription,
+                      String webhookUrl,
                       List<TaskPlannerPort.PlannedStep> steps,
                       StepProgressListener listener);
 

@@ -179,7 +179,7 @@ public class ExecutionRecoveryService {
 
         try {
             graphOrchestrator.executeSteps(execution.id(), taskDescription,
-                    remainingSteps, listener);
+                    task.webhookUrl(), remainingSteps, listener);
             completeRecoveredExecution(execution);
         } catch (Exception e) {
             failRecoveredExecution(execution, e.getMessage());
