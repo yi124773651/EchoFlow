@@ -47,6 +47,7 @@ class WriteReviseAction implements AsyncNodeAction {
         var writeOutput = state.<String>value(ReviewableWriteNodeAction.STATE_KEY_WRITE_OUTPUT).orElse("");
         var feedback = state.<String>value(WriteReviewGateAction.STATE_KEY_REVIEW_FEEDBACK).orElse("");
         var taskDescription = state.<String>value(StepNodeAction.STATE_KEY_TASK_DESCRIPTION).orElse("");
+        var webhookUrl = state.<String>value(StepNodeAction.STATE_KEY_WEBHOOK_URL).orElse(null);
         var attempts = state.<Integer>value(ReviewableWriteNodeAction.STATE_KEY_WRITE_ATTEMPTS).orElse(1);
 
         @SuppressWarnings("unchecked")
@@ -59,7 +60,7 @@ class WriteReviseAction implements AsyncNodeAction {
                 + "\n\nPlease revise the following draft addressing the feedback above:\n" + writeOutput;
         previousOutputs.add(revisionContext);
 
-        var context = new StepExecutionContext(taskDescription, stepName, StepType.WRITE, previousOutputs);
+        var context = new StepExecutionContext(taskDescription, stepName, StepType.WRITE, previousOutputs, webhookUrl);
 
         log.info("Revising WRITE step '{}' (attempt {})", stepName, attempts + 1);
         listener.onStepProgress(stepName, LogType.ACTION, "Revising draft based on review feedback...");

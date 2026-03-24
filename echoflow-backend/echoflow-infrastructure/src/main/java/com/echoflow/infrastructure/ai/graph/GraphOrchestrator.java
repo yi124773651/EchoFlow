@@ -116,7 +116,7 @@ public class GraphOrchestrator implements GraphOrchestrationPort {
             var initialState = new HashMap<String, Object>();
             initialState.put(StepNodeAction.STATE_KEY_TASK_DESCRIPTION, taskDescription);
             if (webhookUrl != null) {
-                initialState.put("webhookUrl", webhookUrl);
+                initialState.put(StepNodeAction.STATE_KEY_WEBHOOK_URL, webhookUrl);
             }
             compiled.invoke(initialState, config);
         } catch (GraphStateException e) {
@@ -141,7 +141,7 @@ public class GraphOrchestrator implements GraphOrchestrationPort {
         var builder = KeyStrategy.builder()
                 .addStrategy(StepNodeAction.STATE_KEY_TASK_DESCRIPTION, KeyStrategy.REPLACE)
                 .addStrategy(StepNodeAction.STATE_KEY_OUTPUTS, KeyStrategy.APPEND)
-                .addStrategy("webhookUrl", KeyStrategy.REPLACE);
+                .addStrategy(StepNodeAction.STATE_KEY_WEBHOOK_URL, KeyStrategy.REPLACE);
 
         if (reviewEnabled()) {
             builder.addStrategy(ReviewableWriteNodeAction.STATE_KEY_WRITE_OUTPUT, KeyStrategy.REPLACE)

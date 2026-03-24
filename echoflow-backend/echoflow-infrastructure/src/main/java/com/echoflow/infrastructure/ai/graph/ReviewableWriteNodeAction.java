@@ -72,8 +72,9 @@ class ReviewableWriteNodeAction implements AsyncNodeAction {
         }
 
         var taskDescription = state.<String>value(StepNodeAction.STATE_KEY_TASK_DESCRIPTION).orElse("");
+        var webhookUrl = state.<String>value(StepNodeAction.STATE_KEY_WEBHOOK_URL).orElse(null);
         var previousOutputs = readPreviousOutputs(state);
-        var context = new StepExecutionContext(taskDescription, stepName, stepType, previousOutputs);
+        var context = new StepExecutionContext(taskDescription, stepName, stepType, previousOutputs, webhookUrl);
 
         try {
             var result = stepExecutor.execute(context);
