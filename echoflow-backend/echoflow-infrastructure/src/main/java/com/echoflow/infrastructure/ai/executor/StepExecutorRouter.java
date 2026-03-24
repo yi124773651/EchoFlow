@@ -7,8 +7,6 @@ import com.echoflow.application.execution.StepOutput;
 import com.echoflow.domain.execution.StepType;
 import com.echoflow.infrastructure.ai.config.ChatClientProvider;
 import com.echoflow.infrastructure.ai.config.MultiModelProperties;
-import com.echoflow.infrastructure.ai.tool.GitHubSearchTool;
-import com.echoflow.infrastructure.ai.tool.WebhookNotifyTool;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
@@ -19,7 +17,6 @@ import org.springframework.stereotype.Component;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
-import java.time.Duration;
 import java.util.Map;
 
 /**
@@ -39,6 +36,8 @@ public class StepExecutorRouter implements StepExecutorPort {
 
     private static final Logger log = LoggerFactory.getLogger(StepExecutorRouter.class);
 
+    private static final int RESEARCH_MAX_MODEL_CALLS = 15;
+
     private final Map<StepType, ReactAgentStepExecutor> reactExecutors;
     private final Map<StepType, LlmStepExecutor> llmExecutors;
     private final Map<StepType, ChatClient> primaryClients;
@@ -51,22 +50,7 @@ public class StepExecutorRouter implements StepExecutorPort {
                               @Value("classpath:prompts/step-research.st") Resource researchPrompt,
                               @Value("classpath:prompts/step-write.st") Resource writePrompt,
                               @Value("classpath:prompts/step-notify.st") Resource notifyPrompt,
-                              @Value("${echoflow.github.api-base-url:https://api.github.com}") String githubBaseUrl,
-                              @Value("${echoflow.github.token:}") String githubToken,
-                              @Value("${echoflow.github.connect-timeout:5s}") Duration githubConnectTimeout,
-                              @Value("${echoflow.github.read-timeout:10s}") Duration githubReadTimeout,
-                              @Value("${echoflow.github.max-results:5}") int githubMaxResults,
-                              @Value("${echoflow.webhook.url:}") String webhookUrl,
-                              @Value("${echoflow.webhook.connect-timeout:5s}") Duration webhookConnectTimeout,
-                              @Value("${echoflow.webhook.read-timeout:10s}") Duration webhookReadTimeout) {
-        // Tools
-        var gitHubSearchTool = new GitHubSearchTool(
-                githubBaseUrl, githubToken,
-                githubConnectTimeout, githubReadTimeout,
-                githubMaxResults);
-        var webhookNotifyTool = new WebhookNotifyTool(
-                webhookUrl, webhookConnectTimeout, webhookReadTimeout);
-
+                              StepToolRegistry toolRegistry) {
         // Routing
         var routing = properties.routing();
         this.primaryClients = Map.of(
@@ -85,20 +69,21 @@ public class StepExecutorRouter implements StepExecutorPort {
         // ReactAgent executors (primary path)
         this.reactExecutors = Map.of(
                 StepType.THINK, new ReactAgentThinkExecutor(
-                        primaryClients.get(StepType.THINK), thinkContent),
+                        primaryClients.get(StepType.THINK), thinkContent, toolRegistry.toolsFor(StepType.THINK)),
                 StepType.RESEARCH, new ReactAgentResearchExecutor(
-                        primaryClients.get(StepType.RESEARCH), researchContent, gitHubSearchTool),
+                        primaryClients.get(StepType.RESEARCH), researchContent,
+                        toolRegistry.toolsFor(StepType.RESEARCH), RESEARCH_MAX_MODEL_CALLS),
                 StepType.WRITE, new ReactAgentWriteExecutor(
-                        primaryClients.get(StepType.WRITE), writeContent),
+                        primaryClients.get(StepType.WRITE), writeContent, toolRegistry.toolsFor(StepType.WRITE)),
                 StepType.NOTIFY, new ReactAgentNotifyExecutor(
-                        primaryClients.get(StepType.NOTIFY), notifyContent, webhookNotifyTool));
+                        primaryClients.get(StepType.NOTIFY), notifyContent, toolRegistry.toolsFor(StepType.NOTIFY)));
 
-        // LLM executors (fallback path)
+        // LLM executors (fallback path — no tools, degradation mode)
         this.llmExecutors = Map.of(
                 StepType.THINK, new LlmThinkExecutor(thinkPrompt),
-                StepType.RESEARCH, new LlmResearchExecutor(researchPrompt, gitHubSearchTool),
+                StepType.RESEARCH, new LlmResearchExecutor(researchPrompt),
                 StepType.WRITE, new LlmWriteExecutor(writePrompt),
-                StepType.NOTIFY, new LlmNotifyExecutor(notifyPrompt, webhookNotifyTool));
+                StepType.NOTIFY, new LlmNotifyExecutor(notifyPrompt));
     }
 
     /**

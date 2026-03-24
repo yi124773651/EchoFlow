@@ -20,13 +20,13 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.*;
 
 /**
- * Tests for {@link ReactAgentThinkExecutor} — verifies THINK-specific behavior:
- * only taskDescription and stepName are passed (no previousContext).
+ * Tests for {@link ReactAgentResearchExecutor} — verifies RESEARCH-specific behavior:
+ * both GitHubSearchTool and WebSearchTool are available, and previousContext is included.
  *
  * <p>Base class retry/validate/truncation is covered by {@link ReactAgentStepExecutorTest}.</p>
  */
 @ExtendWith(MockitoExtension.class)
-class ReactAgentThinkExecutorTest {
+class ReactAgentResearchExecutorTest {
 
     @Mock
     private ReactAgent reactAgent;
@@ -34,8 +34,9 @@ class ReactAgentThinkExecutorTest {
     @Mock
     private ChatClient chatClient;
 
-    private ReactAgentThinkExecutor createExecutor(String promptContent) {
-        return new ReactAgentThinkExecutor(chatClient, promptContent, List.of()) {
+    private ReactAgentResearchExecutor createExecutor(String promptContent) {
+        return new ReactAgentResearchExecutor(chatClient, promptContent, List.of(),
+                ReactAgentStepExecutor.DEFAULT_MAX_MODEL_CALLS) {
             @Override
             protected ReactAgent buildAgent() {
                 return reactAgent;
@@ -44,31 +45,18 @@ class ReactAgentThinkExecutorTest {
     }
 
     @Test
-    void formats_user_message_with_task_and_step_only() throws GraphRunnerException {
+    void formats_user_message_with_previous_context() throws GraphRunnerException {
         when(reactAgent.call(anyString()))
-                .thenReturn(new AssistantMessage("Analysis complete"));
+                .thenReturn(new AssistantMessage("Research complete"));
 
         var executor = createExecutor(
-                "Task: {taskDescription}\nStep: {stepName}");
-        var context = new StepExecutionContext("Build a REST API", "分析", StepType.THINK, List.of());
+                "Task: {taskDescription}\nStep: {stepName}\nContext: {previousContext}");
+        var context = new StepExecutionContext("Build API", "调研", StepType.RESEARCH,
+                List.of("think output"));
         var result = executor.execute(context);
 
-        assertThat(result.output()).isEqualTo("Analysis complete");
-        verify(reactAgent).call("Task: Build a REST API\nStep: 分析");
-    }
-
-    @Test
-    void ignores_previous_context_even_when_provided() throws GraphRunnerException {
-        when(reactAgent.call(anyString()))
-                .thenReturn(new AssistantMessage("Think output"));
-
-        var executor = createExecutor("Task: {taskDescription}\nStep: {stepName}");
-        var context = new StepExecutionContext("My task", "分析", StepType.THINK,
-                List.of("previous output 1", "previous output 2"));
-        executor.execute(context);
-
-        // Should NOT contain any previous context
-        verify(reactAgent).call("Task: My task\nStep: 分析");
+        assertThat(result.output()).isEqualTo("Research complete");
+        verify(reactAgent).call("Task: Build API\nStep: 调研\nContext: --- Step 1 output ---\nthink output");
     }
 
     @Test
@@ -77,8 +65,8 @@ class ReactAgentThinkExecutorTest {
                 .thenThrow(new GraphRunnerException("model timeout"))
                 .thenReturn(new AssistantMessage("Success after retry"));
 
-        var executor = createExecutor("Task: {taskDescription}\nStep: {stepName}");
-        var context = new StepExecutionContext("task", "分析", StepType.THINK, List.of());
+        var executor = createExecutor("Task: {taskDescription}\nStep: {stepName}\nContext: {previousContext}");
+        var context = new StepExecutionContext("task", "调研", StepType.RESEARCH, List.of());
         var result = executor.execute(context);
 
         assertThat(result.output()).isEqualTo("Success after retry");
@@ -90,13 +78,13 @@ class ReactAgentThinkExecutorTest {
         when(reactAgent.call(anyString()))
                 .thenThrow(new GraphRunnerException("persistent failure"));
 
-        var executor = createExecutor("Task: {taskDescription}\nStep: {stepName}");
-        var context = new StepExecutionContext("task", "分析", StepType.THINK, List.of());
+        var executor = createExecutor("Task: {taskDescription}\nStep: {stepName}\nContext: {previousContext}");
+        var context = new StepExecutionContext("task", "调研", StepType.RESEARCH, List.of());
 
         assertThatThrownBy(() -> executor.execute(context))
                 .isInstanceOf(StepExecutionException.class)
                 .hasMessageContaining("failed after")
-                .hasMessageContaining("分析");
+                .hasMessageContaining("调研");
     }
 
     @Test
@@ -104,8 +92,8 @@ class ReactAgentThinkExecutorTest {
         when(reactAgent.call(anyString()))
                 .thenReturn(new AssistantMessage(""));
 
-        var executor = createExecutor("Task: {taskDescription}\nStep: {stepName}");
-        var context = new StepExecutionContext("task", "分析", StepType.THINK, List.of());
+        var executor = createExecutor("Task: {taskDescription}\nStep: {stepName}\nContext: {previousContext}");
+        var context = new StepExecutionContext("task", "调研", StepType.RESEARCH, List.of());
 
         assertThatThrownBy(() -> executor.execute(context))
                 .isInstanceOf(StepExecutionException.class)
@@ -113,8 +101,9 @@ class ReactAgentThinkExecutorTest {
     }
 
     @Test
-    void agent_name_is_think_executor() {
-        var executor = new ReactAgentThinkExecutor(chatClient, "prompt", List.of());
-        assertThat(executor.agentName()).isEqualTo("think_executor");
+    void agent_name_is_research_executor() {
+        var executor = new ReactAgentResearchExecutor(chatClient, "prompt", List.of(),
+                ReactAgentStepExecutor.DEFAULT_MAX_MODEL_CALLS);
+        assertThat(executor.agentName()).isEqualTo("research_executor");
     }
 }

@@ -103,11 +103,11 @@ class ExecutionRecoveryServiceTest {
 
         // Simulate graph execution for remaining steps
         doAnswer(invocation -> {
-            GraphOrchestrationPort.StepProgressListener listener = invocation.getArgument(3);
+            GraphOrchestrationPort.StepProgressListener listener = invocation.getArgument(4);
             listener.onStepStarting("撰写", StepType.WRITE);
             listener.onStepCompleted("撰写", "报告内容");
             return null;
-        }).when(graphOrchestrator).executeSteps(any(), any(), any(), any());
+        }).when(graphOrchestrator).executeSteps(any(), any(), any(), any(), any());
 
         recoveryService.recoverInterruptedExecutions();
 

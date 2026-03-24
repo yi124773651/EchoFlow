@@ -50,6 +50,39 @@ class WebhookNotifyToolTest {
                 .doesNotThrowAnyException();
     }
 
+    @Test
+    void withUrl_creates_copy_with_overridden_url() {
+        var original = createTool("");
+        var copy = original.withUrl("http://localhost:1");
+
+        // Original still has no URL — returns fallback
+        var originalResult = original.sendNotification("Title", "Summary");
+        assertThat(originalResult).contains("Webhook not configured");
+
+        // Copy uses the override URL (will fail to connect, but proves URL was set)
+        var copyResult = copy.sendNotification("Title", "Summary");
+        assertThat(copyResult).contains("Webhook delivery failed");
+    }
+
+    @Test
+    void withUrl_normalizes_blank_to_null() {
+        var original = createTool("http://localhost:1");
+        var copy = original.withUrl("   ");
+
+        var result = copy.sendNotification("Title", "Summary");
+        assertThat(result).contains("Webhook not configured");
+    }
+
+    @Test
+    void withUrl_with_null_falls_back_to_original() {
+        var original = createTool("http://localhost:1");
+        var copy = original.withUrl(null);
+
+        // null override means use original's URL
+        var result = copy.sendNotification("Title", "Summary");
+        assertThat(result).contains("Webhook delivery failed");
+    }
+
     private WebhookNotifyTool createTool(String webhookUrl) {
         return new WebhookNotifyTool(
                 webhookUrl,

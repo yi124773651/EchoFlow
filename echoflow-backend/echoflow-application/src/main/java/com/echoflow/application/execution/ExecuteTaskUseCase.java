@@ -150,7 +150,7 @@ public class ExecuteTaskUseCase {
 
         try {
             graphOrchestrator.executeSteps(execution.id(), taskDescription,
-                    plannedSteps, listener);
+                    task.webhookUrl(), plannedSteps, listener);
             completeExecution(execution);
         } catch (Exception e) {
             failExecution(execution, e.getMessage());

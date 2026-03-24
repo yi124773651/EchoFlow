@@ -99,6 +99,7 @@ public class GraphOrchestrator implements GraphOrchestrationPort {
     @Override
     public void executeSteps(ExecutionId executionId,
                              String taskDescription,
+                             String webhookUrl,
                              List<TaskPlannerPort.PlannedStep> steps,
                              StepProgressListener listener) {
         if (steps.isEmpty()) {
@@ -112,7 +113,12 @@ public class GraphOrchestrator implements GraphOrchestrationPort {
             var config = com.alibaba.cloud.ai.graph.RunnableConfig.builder()
                     .threadId(threadId)
                     .build();
-            compiled.invoke(Map.of(StepNodeAction.STATE_KEY_TASK_DESCRIPTION, taskDescription), config);
+            var initialState = new HashMap<String, Object>();
+            initialState.put(StepNodeAction.STATE_KEY_TASK_DESCRIPTION, taskDescription);
+            if (webhookUrl != null) {
+                initialState.put(StepNodeAction.STATE_KEY_WEBHOOK_URL, webhookUrl);
+            }
+            compiled.invoke(initialState, config);
         } catch (GraphStateException e) {
             throw new IllegalStateException("Failed to build/compile StateGraph", e);
         } finally {
@@ -134,7 +140,8 @@ public class GraphOrchestrator implements GraphOrchestrationPort {
                                   StepProgressListener listener) throws GraphStateException {
         var builder = KeyStrategy.builder()
                 .addStrategy(StepNodeAction.STATE_KEY_TASK_DESCRIPTION, KeyStrategy.REPLACE)
-                .addStrategy(StepNodeAction.STATE_KEY_OUTPUTS, KeyStrategy.APPEND);
+                .addStrategy(StepNodeAction.STATE_KEY_OUTPUTS, KeyStrategy.APPEND)
+                .addStrategy(StepNodeAction.STATE_KEY_WEBHOOK_URL, KeyStrategy.REPLACE);
 
         if (reviewEnabled()) {
             builder.addStrategy(ReviewableWriteNodeAction.STATE_KEY_WRITE_OUTPUT, KeyStrategy.REPLACE)

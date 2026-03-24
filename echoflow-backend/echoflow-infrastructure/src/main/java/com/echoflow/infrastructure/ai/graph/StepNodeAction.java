@@ -36,6 +36,7 @@ class StepNodeAction implements AsyncNodeAction {
 
     static final String STATE_KEY_TASK_DESCRIPTION = "taskDescription";
     static final String STATE_KEY_OUTPUTS = "outputs";
+    static final String STATE_KEY_WEBHOOK_URL = "webhookUrl";
 
     private final String stepName;
     private final StepType stepType;
@@ -64,8 +65,9 @@ class StepNodeAction implements AsyncNodeAction {
         }
 
         var taskDescription = state.<String>value(STATE_KEY_TASK_DESCRIPTION).orElse("");
+        var webhookUrl = state.<String>value(STATE_KEY_WEBHOOK_URL).orElse(null);
         var previousOutputs = readPreviousOutputs(state);
-        var context = new StepExecutionContext(taskDescription, stepName, stepType, previousOutputs);
+        var context = new StepExecutionContext(taskDescription, stepName, stepType, previousOutputs, webhookUrl);
 
         try {
             var result = stepExecutor.execute(context);

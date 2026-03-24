@@ -1,34 +1,17 @@
 package com.echoflow.infrastructure.ai.executor;
 
-import com.echoflow.application.execution.StepExecutionContext;
-import com.echoflow.infrastructure.ai.tool.GitHubSearchTool;
-import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.core.io.Resource;
 
 /**
- * Executes RESEARCH steps with GitHub search tool calling.
+ * Executes RESEARCH steps as a degradation fallback (no tools).
  *
- * <p>Passes a {@link GitHubSearchTool} to the LLM via Spring AI's tool calling API.
- * The LLM autonomously decides whether to invoke the tool based on the task context.</p>
+ * <p>When the primary ReactAgent path fails, this executor provides a pure-LLM
+ * fallback without tool calling. The LLM generates research output based solely
+ * on its parametric knowledge.</p>
  */
 class LlmResearchExecutor extends LlmStepExecutor {
 
-    private final GitHubSearchTool gitHubSearchTool;
-
-    LlmResearchExecutor(Resource promptTemplate, GitHubSearchTool gitHubSearchTool) {
+    LlmResearchExecutor(Resource promptTemplate) {
         super(promptTemplate);
-        this.gitHubSearchTool = gitHubSearchTool;
-    }
-
-    @Override
-    protected String callLlm(StepExecutionContext context, ChatClient chatClient) {
-        return chatClient.prompt()
-                .user(u -> u.text(promptTemplate)
-                        .param("taskDescription", context.taskDescription())
-                        .param("stepName", context.stepName())
-                        .param("previousContext", buildPreviousContext(context.previousOutputs())))
-                .tools(gitHubSearchTool)
-                .call()
-                .content();
     }
 }

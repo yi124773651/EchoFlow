@@ -12,13 +12,23 @@ import java.util.List;
  * @param stepName         the name of the current step
  * @param stepType         the type of the current step
  * @param previousOutputs  outputs from previously completed steps (ordered)
+ * @param webhookUrl       per-task webhook URL for NOTIFY steps (nullable)
  */
 public record StepExecutionContext(
         String taskDescription,
         String stepName,
         StepType stepType,
-        List<String> previousOutputs
+        List<String> previousOutputs,
+        String webhookUrl
 ) {
+    /**
+     * Backward-compatible constructor — defaults webhookUrl to null.
+     */
+    public StepExecutionContext(String taskDescription, String stepName,
+                                StepType stepType, List<String> previousOutputs) {
+        this(taskDescription, stepName, stepType, previousOutputs, null);
+    }
+
     public StepExecutionContext {
         if (taskDescription == null || taskDescription.isBlank()) {
             throw new IllegalArgumentException("Task description must not be blank");

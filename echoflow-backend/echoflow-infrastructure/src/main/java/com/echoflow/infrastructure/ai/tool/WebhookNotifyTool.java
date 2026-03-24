@@ -44,6 +44,24 @@ public class WebhookNotifyTool {
                 .build();
     }
 
+    WebhookNotifyTool(String webhookUrl, RestClient restClient) {
+        this.webhookUrl = webhookUrl;
+        this.restClient = restClient;
+    }
+
+    /**
+     * Create a copy with an overridden webhook URL, sharing the same RestClient.
+     * Blank strings are normalized to null (consistent with Task.submit()).
+     * Null means "keep original URL".
+     */
+    public WebhookNotifyTool withUrl(String overrideUrl) {
+        if (overrideUrl == null) {
+            return new WebhookNotifyTool(this.webhookUrl, this.restClient);
+        }
+        var normalized = overrideUrl.isBlank() ? null : overrideUrl.strip();
+        return new WebhookNotifyTool(normalized, this.restClient);
+    }
+
     @Tool(description = "Send a notification via Webhook. " +
             "Use this to deliver task completion summaries, important findings, or alerts. " +
             "Provide a clear title and a concise summary of what to notify about.")

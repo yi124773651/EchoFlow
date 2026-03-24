@@ -3,6 +3,8 @@ package com.echoflow.infrastructure.ai.executor;
 import com.echoflow.application.execution.StepExecutionContext;
 import org.springframework.ai.chat.client.ChatClient;
 
+import java.util.List;
+
 /**
  * Executes THINK steps using Spring AI Alibaba's ReactAgent.
  *
@@ -11,8 +13,9 @@ import org.springframework.ai.chat.client.ChatClient;
  */
 class ReactAgentThinkExecutor extends ReactAgentStepExecutor {
 
-    ReactAgentThinkExecutor(ChatClient chatClient, String promptContent) {
-        super(chatClient, promptContent);
+    ReactAgentThinkExecutor(ChatClient chatClient, String promptContent,
+                            List<Object> tools) {
+        super(chatClient, promptContent, tools);
     }
 
     @Override

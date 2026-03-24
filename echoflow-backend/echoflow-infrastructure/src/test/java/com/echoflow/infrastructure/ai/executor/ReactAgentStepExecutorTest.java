@@ -40,7 +40,7 @@ class ReactAgentStepExecutorTest {
      * Concrete test subclass — uses the default formatUserMessage (all placeholders).
      */
     private ReactAgentStepExecutor createExecutor(String promptContent) {
-        return new ReactAgentStepExecutor(chatClient, promptContent) {
+        return new ReactAgentStepExecutor(chatClient, promptContent, List.of()) {
             @Override
             protected String agentName() {
                 return "test_executor";
@@ -189,6 +189,38 @@ class ReactAgentStepExecutorTest {
             var expected = "--- Step 1 output ---\noutput A\n\n--- Step 2 output ---\noutput B";
             verify(reactAgent).call(expected);
         }
+    }
+
+    // --- maxModelCalls configuration ---
+
+    @Nested
+    class ModelCallLimit {
+
+        @Test
+        void default_maxModelCalls_is_5() {
+            var executor = createExecutor("prompt {taskDescription} {stepName} {previousContext}");
+            assertThat(executor.maxModelCalls()).isEqualTo(5);
+        }
+
+        @Test
+        void custom_maxModelCalls_is_stored() {
+            var executor = createExecutorWithMaxModelCalls("prompt", 15);
+            assertThat(executor.maxModelCalls()).isEqualTo(15);
+        }
+    }
+
+    private ReactAgentStepExecutor createExecutorWithMaxModelCalls(String promptContent, int maxModelCalls) {
+        return new ReactAgentStepExecutor(chatClient, promptContent, List.of(), maxModelCalls) {
+            @Override
+            protected String agentName() {
+                return "test_executor";
+            }
+
+            @Override
+            protected ReactAgent buildAgent() {
+                return reactAgent;
+            }
+        };
     }
 
     // --- buildPreviousContext static method ---

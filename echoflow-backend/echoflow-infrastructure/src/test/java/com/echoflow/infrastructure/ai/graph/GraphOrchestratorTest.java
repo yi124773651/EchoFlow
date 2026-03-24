@@ -55,7 +55,7 @@ class GraphOrchestratorTest {
                     new TaskPlannerPort.PlannedStep("分析", StepType.THINK));
             when(stepExecutor.execute(any())).thenReturn(new StepOutput("分析结果"));
 
-            orchestrator.executeSteps(EXEC_ID,"调研任务", steps, listener);
+            orchestrator.executeSteps(EXEC_ID,"调研任务", null, steps, listener);
 
             verify(listener).onStepStarting("分析", StepType.THINK);
             verify(listener).onStepCompleted("分析", "分析结果");
@@ -83,7 +83,7 @@ class GraphOrchestratorTest {
                     ctx != null && ctx.stepType() == StepType.WRITE)))
                     .thenReturn(new StepOutput("报告"));
 
-            orchestrator.executeSteps(EXEC_ID,"写报告", steps, listener);
+            orchestrator.executeSteps(EXEC_ID,"写报告", null, steps, listener);
 
             // Verify execution order
             InOrder inOrder = inOrder(listener);
@@ -125,7 +125,7 @@ class GraphOrchestratorTest {
                     ctx != null && ctx.stepType() == StepType.WRITE)))
                     .thenReturn(new StepOutput("报告"));
 
-            orchestrator.executeSteps(EXEC_ID,"测试任务", steps, listener);
+            orchestrator.executeSteps(EXEC_ID,"测试任务", null, steps, listener);
 
             // Verify skip notification
             verify(listener).onStepSkipped("搜索", "LLM timeout");
@@ -151,7 +151,7 @@ class GraphOrchestratorTest {
                     ctx != null && ctx.stepType() == StepType.RESEARCH)))
                     .thenReturn(new StepOutput("搜索结果"));
 
-            orchestrator.executeSteps(EXEC_ID,"任务", steps, listener);
+            orchestrator.executeSteps(EXEC_ID,"任务", null, steps, listener);
 
             verify(listener).onStepSkipped("分析", "degradation");
             verify(listener).onStepCompleted("搜索", "搜索结果");
@@ -173,7 +173,7 @@ class GraphOrchestratorTest {
                     .thenThrow(new RuntimeException("unexpected NPE"));
 
             assertThatThrownBy(() ->
-                    orchestrator.executeSteps(EXEC_ID,"任务", steps, listener))
+                    orchestrator.executeSteps(EXEC_ID,"任务", null, steps, listener))
                     .isInstanceOf(Exception.class);
 
             verify(listener).onStepFailed("分析", "unexpected NPE");
@@ -187,7 +187,7 @@ class GraphOrchestratorTest {
 
         @Test
         void does_nothing_when_steps_is_empty() {
-            orchestrator.executeSteps(EXEC_ID,"任务", List.of(), listener);
+            orchestrator.executeSteps(EXEC_ID,"任务", null, List.of(), listener);
 
             verifyNoInteractions(stepExecutor, listener);
         }
@@ -294,7 +294,7 @@ class GraphOrchestratorTest {
                     ctx != null && ctx.stepType() == StepType.WRITE)))
                     .thenReturn(new StepOutput("报告"));
 
-            orchestrator.executeSteps(EXEC_ID,"简单任务", steps, listener);
+            orchestrator.executeSteps(EXEC_ID,"简单任务", null, steps, listener);
 
             // THINK executes, RESEARCH skipped, WRITE executes
             InOrder inOrder = inOrder(listener, stepExecutor);
@@ -331,7 +331,7 @@ class GraphOrchestratorTest {
                     ctx != null && ctx.stepType() == StepType.WRITE)))
                     .thenReturn(new StepOutput("报告"));
 
-            orchestrator.executeSteps(EXEC_ID,"复杂任务", steps, listener);
+            orchestrator.executeSteps(EXEC_ID,"复杂任务", null, steps, listener);
 
             // All steps execute normally
             verify(stepExecutor, times(3)).execute(any());
@@ -358,7 +358,7 @@ class GraphOrchestratorTest {
                     ctx != null && ctx.stepType() == StepType.WRITE)))
                     .thenReturn(new StepOutput("报告"));
 
-            orchestrator.executeSteps(EXEC_ID,"任务", steps, listener);
+            orchestrator.executeSteps(EXEC_ID,"任务", null, steps, listener);
 
             // Safe default: all steps execute (including RESEARCH)
             verify(stepExecutor, times(3)).execute(any());
@@ -380,7 +380,7 @@ class GraphOrchestratorTest {
                     ctx != null && ctx.stepType() == StepType.WRITE)))
                     .thenReturn(new StepOutput("报告"));
 
-            orchestrator.executeSteps(EXEC_ID,"简单任务", steps, listener);
+            orchestrator.executeSteps(EXEC_ID,"简单任务", null, steps, listener);
 
             // Both RESEARCH steps skipped
             verify(listener).onStepSkipped(eq("搜索1"), anyString());
@@ -411,7 +411,7 @@ class GraphOrchestratorTest {
                     ctx != null && ctx.stepType() == StepType.WRITE)))
                     .thenReturn(new StepOutput("报告"));
 
-            orchestrator.executeSteps(EXEC_ID,"复杂任务", steps, listener);
+            orchestrator.executeSteps(EXEC_ID,"复杂任务", null, steps, listener);
 
             // All 4 steps execute, no skips
             verify(stepExecutor, times(4)).execute(any());
@@ -443,7 +443,7 @@ class GraphOrchestratorTest {
                     ctx != null && ctx.stepType() == StepType.WRITE)))
                     .thenReturn(new StepOutput("报告"));
 
-            orchestrator.executeSteps(EXEC_ID,"复杂任务", steps, listener);
+            orchestrator.executeSteps(EXEC_ID,"复杂任务", null, steps, listener);
 
             // Verify WRITE receives THINK + both RESEARCH outputs (order may vary)
             var captor = ArgumentCaptor.forClass(StepExecutionContext.class);
@@ -476,7 +476,7 @@ class GraphOrchestratorTest {
                     ctx != null && ctx.stepType() == StepType.WRITE)))
                     .thenReturn(new StepOutput("报告"));
 
-            orchestrator.executeSteps(EXEC_ID,"任务", steps, listener);
+            orchestrator.executeSteps(EXEC_ID,"任务", null, steps, listener);
 
             // Parallel RESEARCH steps each see only THINK output (not each other's)
             var captor = ArgumentCaptor.forClass(StepExecutionContext.class);
@@ -511,7 +511,7 @@ class GraphOrchestratorTest {
                     ctx != null && ctx.stepType() == StepType.WRITE)))
                     .thenReturn(new StepOutput("报告"));
 
-            orchestrator.executeSteps(EXEC_ID,"任务", steps, listener);
+            orchestrator.executeSteps(EXEC_ID,"任务", null, steps, listener);
 
             // 搜索1 degraded (skipped), 搜索2 completed, WRITE continues
             verify(listener).onStepSkipped("搜索1", "LLM timeout");
@@ -538,7 +538,7 @@ class GraphOrchestratorTest {
 
             when(stepExecutor.execute(any())).thenReturn(new StepOutput("output"));
 
-            orchestrator.executeSteps(EXEC_ID,"任务", steps, listener);
+            orchestrator.executeSteps(EXEC_ID,"任务", null, steps, listener);
 
             // All executed linearly
             verify(stepExecutor, times(3)).execute(any());
@@ -554,7 +554,7 @@ class GraphOrchestratorTest {
 
             when(stepExecutor.execute(any())).thenReturn(new StepOutput("output"));
 
-            orchestrator.executeSteps(EXEC_ID,"任务", steps, listener);
+            orchestrator.executeSteps(EXEC_ID,"任务", null, steps, listener);
 
             verify(stepExecutor, times(3)).execute(any());
             verify(listener, never()).onStepSkipped(any(), any());
@@ -574,7 +574,7 @@ class GraphOrchestratorTest {
                     ctx != null && ctx.stepType() == StepType.WRITE)))
                     .thenReturn(new StepOutput("报告"));
 
-            orchestrator.executeSteps(EXEC_ID,"任务", steps, listener);
+            orchestrator.executeSteps(EXEC_ID,"任务", null, steps, listener);
 
             // WRITE should only have THINK output (RESEARCH was skipped, no output)
             var captor = ArgumentCaptor.forClass(StepExecutionContext.class);
@@ -597,7 +597,7 @@ class GraphOrchestratorTest {
                     ctx != null && ctx.stepType() == StepType.THINK)))
                     .thenReturn(new StepOutput(THINK_OUTPUT_SKIP));
 
-            orchestrator.executeSteps(EXEC_ID,"简单任务", steps, listener);
+            orchestrator.executeSteps(EXEC_ID,"简单任务", null, steps, listener);
 
             verify(listener).onStepCompleted("分析", THINK_OUTPUT_SKIP);
             verify(listener).onStepSkipped(eq("搜索"), anyString());
@@ -634,7 +634,7 @@ class GraphOrchestratorTest {
             when(reviewer.evaluate("test task", "撰写", "# Report"))
                     .thenReturn(new ReviewResult(90, true, "No issues"));
 
-            orchestrator.executeSteps(EXEC_ID,"test task", steps, listener);
+            orchestrator.executeSteps(EXEC_ID,"test task", null, steps, listener);
 
             // All steps complete in order
             InOrder inOrder = inOrder(listener);
@@ -668,7 +668,7 @@ class GraphOrchestratorTest {
                     .thenReturn(new ReviewResult(50, false, "Needs more detail"))
                     .thenReturn(new ReviewResult(85, true, "Good"));
 
-            orchestrator.executeSteps(EXEC_ID,"test task", steps, listener);
+            orchestrator.executeSteps(EXEC_ID,"test task", null, steps, listener);
 
             // WRITE starts once, completes once (with revised output)
             verify(listener).onStepStarting("撰写", StepType.WRITE);
@@ -708,7 +708,7 @@ class GraphOrchestratorTest {
                     .thenReturn(new ReviewResult(50, false, "Needs work"))
                     .thenReturn(new ReviewResult(60, false, "Still needs work"));
 
-            orchestrator.executeSteps(EXEC_ID,"test task", steps, listener);
+            orchestrator.executeSteps(EXEC_ID,"test task", null, steps, listener);
 
             // Force-approved after max attempts
             verify(listener).onStepCompleted("撰写", "# Draft v2");
@@ -735,7 +735,7 @@ class GraphOrchestratorTest {
             when(reviewer.evaluate(any(), any(), any()))
                     .thenReturn(new ReviewResult(90, true, "Good"));
 
-            orchestrator.executeSteps(EXEC_ID,"任务", steps, listener);
+            orchestrator.executeSteps(EXEC_ID,"任务", null, steps, listener);
 
             // All steps complete
             verify(listener).onStepCompleted("分析", THINK_OUTPUT_RUN);
@@ -759,7 +759,7 @@ class GraphOrchestratorTest {
             when(stepExecutor.execute(argThat(ctx -> ctx != null && ctx.stepType() == StepType.NOTIFY)))
                     .thenReturn(new StepOutput("已通知"));
 
-            orchestrator.executeSteps(EXEC_ID,"test task", steps, listener);
+            orchestrator.executeSteps(EXEC_ID,"test task", null, steps, listener);
 
             // WRITE skipped, review auto-approves (blank output)
             verify(listener).onStepSkipped("撰写", "LLM timeout");
@@ -776,7 +776,7 @@ class GraphOrchestratorTest {
 
             when(stepExecutor.execute(any())).thenReturn(new StepOutput("output"));
 
-            orchestrator.executeSteps(EXEC_ID,"task", steps, listener);
+            orchestrator.executeSteps(EXEC_ID,"task", null, steps, listener);
 
             verify(stepExecutor, times(2)).execute(any());
             verifyNoInteractions(reviewer);

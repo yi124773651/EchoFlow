@@ -1,35 +1,25 @@
 package com.echoflow.infrastructure.ai.executor;
 
-import com.alibaba.cloud.ai.graph.agent.Builder;
-import com.echoflow.infrastructure.ai.tool.GitHubSearchTool;
 import org.springframework.ai.chat.client.ChatClient;
+
+import java.util.List;
 
 /**
  * Executes RESEARCH steps using ReactAgent with GitHub search tool calling.
  *
- * <p>The ReactAgent autonomously decides whether to invoke the {@link GitHubSearchTool}
+ * <p>The ReactAgent autonomously decides whether to invoke search tools
  * based on the task context. A {@link ToolRetryInterceptor} retries failed tool calls
  * with exponential backoff.</p>
  */
 class ReactAgentResearchExecutor extends ReactAgentStepExecutor {
 
-    private final GitHubSearchTool gitHubSearchTool;
-
     ReactAgentResearchExecutor(ChatClient chatClient, String promptContent,
-                               GitHubSearchTool gitHubSearchTool) {
-        super(chatClient, promptContent);
-        this.gitHubSearchTool = gitHubSearchTool;
+                               List<Object> tools, int maxModelCalls) {
+        super(chatClient, promptContent, tools, maxModelCalls);
     }
 
     @Override
     protected String agentName() {
         return "research_executor";
-    }
-
-    @Override
-    protected Builder configureAgent(Builder builder) {
-        return builder
-                .methodTools(gitHubSearchTool)
-                .interceptors(new ToolRetryInterceptor(2));
     }
 }

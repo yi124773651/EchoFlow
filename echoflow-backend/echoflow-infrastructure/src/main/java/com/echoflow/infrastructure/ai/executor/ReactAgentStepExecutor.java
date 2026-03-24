@@ -29,13 +29,26 @@ abstract class ReactAgentStepExecutor {
     private static final Logger log = LoggerFactory.getLogger(ReactAgentStepExecutor.class);
     static final int MAX_RETRIES = 2;
     static final int MAX_OUTPUT_LENGTH = 10_000;
+    static final int DEFAULT_MAX_MODEL_CALLS = 5;
 
     protected final ChatClient chatClient;
     protected final String promptContent;
+    private final List<Object> tools;
+    private final int maxModelCalls;
 
-    ReactAgentStepExecutor(ChatClient chatClient, String promptContent) {
+    ReactAgentStepExecutor(ChatClient chatClient, String promptContent, List<Object> tools) {
+        this(chatClient, promptContent, tools, DEFAULT_MAX_MODEL_CALLS);
+    }
+
+    ReactAgentStepExecutor(ChatClient chatClient, String promptContent, List<Object> tools, int maxModelCalls) {
         this.chatClient = chatClient;
         this.promptContent = promptContent;
+        this.tools = List.copyOf(tools);
+        this.maxModelCalls = maxModelCalls;
+    }
+
+    int maxModelCalls() {
+        return maxModelCalls;
     }
 
     /**
@@ -44,10 +57,22 @@ abstract class ReactAgentStepExecutor {
     protected abstract String agentName();
 
     /**
+     * Accessor for subclasses that need to inspect/replace tools at build time.
+     */
+    protected List<Object> tools() {
+        return tools;
+    }
+
+    /**
      * Hook for subclasses to add tools, interceptors, etc.
      * The builder already has chatClient and default hooks configured.
      */
     protected Builder configureAgent(Builder builder) {
+        if (!tools.isEmpty()) {
+            builder = builder
+                    .methodTools(tools.toArray())
+                    .interceptors(new ToolRetryInterceptor(2));
+        }
         return builder;
     }
 
@@ -93,7 +118,7 @@ abstract class ReactAgentStepExecutor {
                 .name(agentName())
                 .chatClient(chatClient)
                 .hooks(
-                        ModelCallLimitHook.builder().runLimit(5).build(),
+                        ModelCallLimitHook.builder().runLimit(maxModelCalls).build(),
                         new MessageTrimmingHook(20));
         return configureAgent(builder).build();
     }
