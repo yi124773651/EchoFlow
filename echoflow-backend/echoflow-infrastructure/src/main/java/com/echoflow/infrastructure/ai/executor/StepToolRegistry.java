@@ -5,11 +5,11 @@ import com.echoflow.domain.execution.StepType;
 import java.util.List;
 import java.util.Map;
 
-class StepToolRegistry {
+public class StepToolRegistry {
 
     private final Map<StepType, List<Object>> tools;
 
-    StepToolRegistry(Map<StepType, List<Object>> tools) {
+    public StepToolRegistry(Map<StepType, List<Object>> tools) {
         this.tools = Map.copyOf(tools);
     }
 
