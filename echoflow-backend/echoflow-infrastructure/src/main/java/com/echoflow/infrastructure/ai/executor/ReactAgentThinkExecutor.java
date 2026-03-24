@@ -1,6 +1,8 @@
 package com.echoflow.infrastructure.ai.executor;
 
+import com.alibaba.cloud.ai.graph.agent.Builder;
 import com.echoflow.application.execution.StepExecutionContext;
+import com.echoflow.infrastructure.ai.tool.WebSearchTool;
 import org.springframework.ai.chat.client.ChatClient;
 
 /**
@@ -11,13 +13,24 @@ import org.springframework.ai.chat.client.ChatClient;
  */
 class ReactAgentThinkExecutor extends ReactAgentStepExecutor {
 
-    ReactAgentThinkExecutor(ChatClient chatClient, String promptContent) {
+    private final WebSearchTool webSearchTool;
+
+    ReactAgentThinkExecutor(ChatClient chatClient, String promptContent,
+                            WebSearchTool webSearchTool) {
         super(chatClient, promptContent);
+        this.webSearchTool = webSearchTool;
     }
 
     @Override
     protected String agentName() {
         return "think_executor";
+    }
+
+    @Override
+    protected Builder configureAgent(Builder builder) {
+        return builder
+                .methodTools(webSearchTool)
+                .interceptors(new ToolRetryInterceptor(2));
     }
 
     /**
