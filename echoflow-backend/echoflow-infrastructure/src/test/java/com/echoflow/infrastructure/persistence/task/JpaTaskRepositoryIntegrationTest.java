@@ -189,7 +189,7 @@ class JpaTaskRepositoryIntegrationTest extends AbstractPostgresIntegrationTest {
     @Test
     void concurrent_save_throws_optimistic_lock_exception() {
         var id = UUID.randomUUID();
-        var entity = new TaskEntity(id, "test", "SUBMITTED", NOW, null);
+        var entity = new TaskEntity(id, "test", "SUBMITTED", NOW, null, null);
         entityManager.persistAndFlush(entity);
         entityManager.detach(entity);
 
