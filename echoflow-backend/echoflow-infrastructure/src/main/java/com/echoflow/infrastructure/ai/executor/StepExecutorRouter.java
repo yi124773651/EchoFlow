@@ -8,6 +8,7 @@ import com.echoflow.domain.execution.StepType;
 import com.echoflow.infrastructure.ai.config.ChatClientProvider;
 import com.echoflow.infrastructure.ai.config.MultiModelProperties;
 import com.echoflow.infrastructure.ai.tool.GitHubSearchTool;
+import com.echoflow.infrastructure.ai.tool.WebSearchTool;
 import com.echoflow.infrastructure.ai.tool.WebhookNotifyTool;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -58,7 +59,8 @@ public class StepExecutorRouter implements StepExecutorPort {
                               @Value("${echoflow.github.max-results:5}") int githubMaxResults,
                               @Value("${echoflow.webhook.url:}") String webhookUrl,
                               @Value("${echoflow.webhook.connect-timeout:5s}") Duration webhookConnectTimeout,
-                              @Value("${echoflow.webhook.read-timeout:10s}") Duration webhookReadTimeout) {
+                              @Value("${echoflow.webhook.read-timeout:10s}") Duration webhookReadTimeout,
+                              WebSearchTool webSearchTool) {
         // Tools
         var gitHubSearchTool = new GitHubSearchTool(
                 githubBaseUrl, githubToken,
@@ -85,9 +87,9 @@ public class StepExecutorRouter implements StepExecutorPort {
         // ReactAgent executors (primary path)
         this.reactExecutors = Map.of(
                 StepType.THINK, new ReactAgentThinkExecutor(
-                        primaryClients.get(StepType.THINK), thinkContent),
+                        primaryClients.get(StepType.THINK), thinkContent, webSearchTool),
                 StepType.RESEARCH, new ReactAgentResearchExecutor(
-                        primaryClients.get(StepType.RESEARCH), researchContent, gitHubSearchTool),
+                        primaryClients.get(StepType.RESEARCH), researchContent, gitHubSearchTool, webSearchTool),
                 StepType.WRITE, new ReactAgentWriteExecutor(
                         primaryClients.get(StepType.WRITE), writeContent),
                 StepType.NOTIFY, new ReactAgentNotifyExecutor(
