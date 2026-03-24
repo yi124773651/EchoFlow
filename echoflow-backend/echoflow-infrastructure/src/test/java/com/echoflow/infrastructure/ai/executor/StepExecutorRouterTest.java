@@ -4,10 +4,6 @@ import com.echoflow.application.execution.StepExecutionContext;
 import com.echoflow.application.execution.StepExecutionException;
 import com.echoflow.application.execution.StepOutput;
 import com.echoflow.domain.execution.StepType;
-import com.echoflow.infrastructure.ai.config.ChatClientProvider;
-import com.echoflow.infrastructure.ai.config.MultiModelProperties;
-import com.echoflow.infrastructure.ai.tool.GitHubSearchTool;
-import com.echoflow.infrastructure.ai.tool.WebhookNotifyTool;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -17,7 +13,6 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.core.io.ByteArrayResource;
 
-import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
@@ -51,7 +46,6 @@ class StepExecutorRouterTest {
         // Fallback client mock chain (for LLM fallback path)
         lenient().when(fallbackChatClient.prompt()).thenReturn(fallbackRequestSpec);
         lenient().when(fallbackRequestSpec.user(any(Consumer.class))).thenReturn(fallbackRequestSpec);
-        lenient().when(fallbackRequestSpec.tools(any(Object.class))).thenReturn(fallbackRequestSpec);
 
         var thinkPrompt = new ByteArrayResource("think {taskDescription} {stepName}".getBytes());
         var researchPrompt = new ByteArrayResource("research {taskDescription} {stepName} {previousContext}".getBytes());
@@ -66,12 +60,9 @@ class StepExecutorRouterTest {
                         StepType.NOTIFY, reactNotifyExecutor),
                 Map.of(
                         StepType.THINK, new LlmThinkExecutor(thinkPrompt),
-                        StepType.RESEARCH, new LlmResearchExecutor(researchPrompt,
-                                new GitHubSearchTool("https://api.github.com", "",
-                                        Duration.ofSeconds(5), Duration.ofSeconds(10), 5)),
+                        StepType.RESEARCH, new LlmResearchExecutor(researchPrompt),
                         StepType.WRITE, new LlmWriteExecutor(writePrompt),
-                        StepType.NOTIFY, new LlmNotifyExecutor(notifyPrompt,
-                                new WebhookNotifyTool("", Duration.ofSeconds(5), Duration.ofSeconds(10)))),
+                        StepType.NOTIFY, new LlmNotifyExecutor(notifyPrompt)),
                 Map.of(
                         StepType.THINK, primaryChatClient,
                         StepType.RESEARCH, primaryChatClient,
@@ -211,14 +202,11 @@ class StepExecutorRouterTest {
                             StepType.THINK, new LlmThinkExecutor(
                                     new ByteArrayResource("think {taskDescription} {stepName}".getBytes())),
                             StepType.RESEARCH, new LlmResearchExecutor(
-                                    new ByteArrayResource("r {taskDescription} {stepName} {previousContext}".getBytes()),
-                                    new GitHubSearchTool("https://api.github.com", "",
-                                            Duration.ofSeconds(5), Duration.ofSeconds(10), 5)),
+                                    new ByteArrayResource("r {taskDescription} {stepName} {previousContext}".getBytes())),
                             StepType.WRITE, new LlmWriteExecutor(
                                     new ByteArrayResource("w {taskDescription} {stepName} {previousContext}".getBytes())),
                             StepType.NOTIFY, new LlmNotifyExecutor(
-                                    new ByteArrayResource("n {taskDescription} {stepName} {previousContext}".getBytes()),
-                                    new WebhookNotifyTool("", Duration.ofSeconds(5), Duration.ofSeconds(10)))),
+                                    new ByteArrayResource("n {taskDescription} {stepName} {previousContext}".getBytes()))),
                     Map.of(
                             StepType.THINK, primaryChatClient,
                             StepType.RESEARCH, primaryChatClient,
@@ -241,32 +229,6 @@ class StepExecutorRouterTest {
 
     @Nested
     class LlmFallbackDetails {
-
-        @Test
-        void research_fallback_registers_tools() {
-            when(reactResearchExecutor.execute(any()))
-                    .thenThrow(new StepExecutionException("fail"));
-            when(fallbackRequestSpec.call()).thenReturn(fallbackCallSpec);
-            when(fallbackCallSpec.content()).thenReturn("Research with tools");
-
-            var context = new StepExecutionContext("task", "调研", StepType.RESEARCH, List.of());
-            router.execute(context);
-
-            verify(fallbackRequestSpec).tools(any(GitHubSearchTool.class));
-        }
-
-        @Test
-        void notify_fallback_registers_tools() {
-            when(reactNotifyExecutor.execute(any()))
-                    .thenThrow(new StepExecutionException("fail"));
-            when(fallbackRequestSpec.call()).thenReturn(fallbackCallSpec);
-            when(fallbackCallSpec.content()).thenReturn("Notify with tools");
-
-            var context = new StepExecutionContext("task", "通知", StepType.NOTIFY, List.of());
-            router.execute(context);
-
-            verify(fallbackRequestSpec).tools(any(WebhookNotifyTool.class));
-        }
 
         @Test
         void propagates_exception_when_both_react_agent_and_llm_fallback_fail() {
