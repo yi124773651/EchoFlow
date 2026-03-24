@@ -57,6 +57,13 @@ abstract class ReactAgentStepExecutor {
     protected abstract String agentName();
 
     /**
+     * Accessor for subclasses that need to inspect/replace tools at build time.
+     */
+    protected List<Object> tools() {
+        return tools;
+    }
+
+    /**
      * Hook for subclasses to add tools, interceptors, etc.
      * The builder already has chatClient and default hooks configured.
      */
