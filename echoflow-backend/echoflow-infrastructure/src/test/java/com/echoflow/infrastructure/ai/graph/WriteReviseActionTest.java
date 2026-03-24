@@ -38,6 +38,7 @@ class WriteReviseActionTest {
         var state = new OverAllState();
         state.registerKeyAndStrategy(StepNodeAction.STATE_KEY_TASK_DESCRIPTION, KeyStrategy.REPLACE);
         state.registerKeyAndStrategy(StepNodeAction.STATE_KEY_OUTPUTS, KeyStrategy.APPEND);
+        state.registerKeyAndStrategy(StepNodeAction.STATE_KEY_WEBHOOK_URL, KeyStrategy.REPLACE);
         state.registerKeyAndStrategy(ReviewableWriteNodeAction.STATE_KEY_WRITE_OUTPUT, KeyStrategy.REPLACE);
         state.registerKeyAndStrategy(ReviewableWriteNodeAction.STATE_KEY_WRITE_ATTEMPTS, KeyStrategy.REPLACE);
         state.registerKeyAndStrategy(ReviewableWriteNodeAction.STATE_KEY_REVIEW_DECISION, KeyStrategy.REPLACE);

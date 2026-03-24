@@ -43,6 +43,7 @@ class StepNodeActionTest {
         var state = new OverAllState();
         state.registerKeyAndStrategy(StepNodeAction.STATE_KEY_TASK_DESCRIPTION, KeyStrategy.REPLACE);
         state.registerKeyAndStrategy(StepNodeAction.STATE_KEY_OUTPUTS, KeyStrategy.APPEND);
+        state.registerKeyAndStrategy(StepNodeAction.STATE_KEY_WEBHOOK_URL, KeyStrategy.REPLACE);
         state.updateState(Map.of(StepNodeAction.STATE_KEY_TASK_DESCRIPTION, taskDescription));
         for (var output : outputs) {
             state.updateState(Map.of(StepNodeAction.STATE_KEY_OUTPUTS, output));
@@ -162,6 +163,38 @@ class StepNodeActionTest {
             verify(stepExecutor).execute(captor.capture());
             assertThat(captor.getValue().previousOutputs())
                     .containsExactly("分析输出", "其他输出");
+        }
+    }
+
+    @Nested
+    class WebhookUrlReading {
+
+        @Test
+        void passes_webhookUrl_from_state_to_context() throws Exception {
+            var notifyStep = new TaskPlannerPort.PlannedStep("通知", StepType.NOTIFY);
+            var action = new StepNodeAction(notifyStep, stepExecutor, listener);
+            when(stepExecutor.execute(any())).thenReturn(new StepOutput("已通知"));
+
+            var state = stateWith("任务");
+            state.updateState(Map.of(StepNodeAction.STATE_KEY_WEBHOOK_URL, "https://example.com/hook"));
+
+            action.apply(state);
+
+            var captor = org.mockito.ArgumentCaptor.forClass(StepExecutionContext.class);
+            verify(stepExecutor).execute(captor.capture());
+            assertThat(captor.getValue().webhookUrl()).isEqualTo("https://example.com/hook");
+        }
+
+        @Test
+        void webhookUrl_is_null_when_not_in_state() throws Exception {
+            var action = new StepNodeAction(thinkStep, stepExecutor, listener);
+            when(stepExecutor.execute(any())).thenReturn(new StepOutput("结果"));
+
+            action.apply(stateWith("任务"));
+
+            var captor = org.mockito.ArgumentCaptor.forClass(StepExecutionContext.class);
+            verify(stepExecutor).execute(captor.capture());
+            assertThat(captor.getValue().webhookUrl()).isNull();
         }
     }
 }
