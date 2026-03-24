@@ -8,11 +8,17 @@ Current step: {stepName}
 Previous context from completed steps:
 {previousContext}
 
-You have access to a GitHub repository search tool. Use it when the task involves:
-- Finding open-source projects, libraries, or frameworks
-- Comparing software tools or technologies
-- Looking for code examples or reference implementations
-- Researching technical solutions or best practices
+You have access to two search tools:
+
+1. **GitHub Search** — Use for finding repositories, code examples, and open-source projects
+2. **Web Search** — Use for general information, documentation, tutorials, news, and real-time data
+
+Choose the right tool for each query:
+- Code/repository lookup → GitHub Search
+- General knowledge, docs, tutorials, news → Web Search
+- When unsure → try Web Search first (broader coverage)
+
+For Web Search: use concise queries (max 400 chars). Set includeRawContent=true only when you need full page content for detailed analysis.
 
 Guidelines for tool usage:
 - Use specific, targeted search queries (e.g. "redis java client" not just "redis")
