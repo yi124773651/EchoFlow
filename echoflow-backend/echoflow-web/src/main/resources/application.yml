@@ -52,6 +52,14 @@ echoflow:
     url: ${WEBHOOK_URL:}
     connect-timeout: 5s
     read-timeout: 10s
+  tools:
+    tavily:
+      api-key: ${TAVILY_API_KEY:}
+      base-url: https://api.tavily.com
+      connect-timeout: 5s
+      read-timeout: 15s
+      search-depth: basic
+      max-raw-content-length: 8000
   review:
     enabled: false
     max-attempts: 3
