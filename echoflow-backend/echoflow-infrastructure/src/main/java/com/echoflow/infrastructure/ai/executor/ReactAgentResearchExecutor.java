@@ -2,6 +2,7 @@ package com.echoflow.infrastructure.ai.executor;
 
 import com.alibaba.cloud.ai.graph.agent.Builder;
 import com.echoflow.infrastructure.ai.tool.GitHubSearchTool;
+import com.echoflow.infrastructure.ai.tool.WebSearchTool;
 import org.springframework.ai.chat.client.ChatClient;
 
 /**
@@ -14,11 +15,14 @@ import org.springframework.ai.chat.client.ChatClient;
 class ReactAgentResearchExecutor extends ReactAgentStepExecutor {
 
     private final GitHubSearchTool gitHubSearchTool;
+    private final WebSearchTool webSearchTool;
 
     ReactAgentResearchExecutor(ChatClient chatClient, String promptContent,
-                               GitHubSearchTool gitHubSearchTool) {
+                               GitHubSearchTool gitHubSearchTool,
+                               WebSearchTool webSearchTool) {
         super(chatClient, promptContent);
         this.gitHubSearchTool = gitHubSearchTool;
+        this.webSearchTool = webSearchTool;
     }
 
     @Override
@@ -29,7 +33,7 @@ class ReactAgentResearchExecutor extends ReactAgentStepExecutor {
     @Override
     protected Builder configureAgent(Builder builder) {
         return builder
-                .methodTools(gitHubSearchTool)
+                .methodTools(gitHubSearchTool, webSearchTool)
                 .interceptors(new ToolRetryInterceptor(2));
     }
 }
