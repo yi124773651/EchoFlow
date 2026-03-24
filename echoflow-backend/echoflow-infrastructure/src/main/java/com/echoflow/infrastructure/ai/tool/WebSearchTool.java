@@ -5,6 +5,8 @@ import org.slf4j.LoggerFactory;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.tool.annotation.ToolParam;
 
+import com.echoflow.infrastructure.ai.config.TavilyProperties;
+
 import java.util.List;
 import java.util.stream.IntStream;
 
@@ -15,6 +17,10 @@ public class WebSearchTool {
 
     public WebSearchTool(WebSearchProvider searchProvider) {
         this.searchProvider = searchProvider;
+    }
+
+    public static WebSearchTool create(TavilyProperties properties) {
+        return new WebSearchTool(new TavilyWebSearchProvider(properties));
     }
 
     @Tool(description = "Search the web for real-time information on any topic. "
