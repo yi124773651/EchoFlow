@@ -32,10 +32,12 @@ abstract class ReactAgentStepExecutor {
 
     protected final ChatClient chatClient;
     protected final String promptContent;
+    private final List<Object> tools;
 
-    ReactAgentStepExecutor(ChatClient chatClient, String promptContent) {
+    ReactAgentStepExecutor(ChatClient chatClient, String promptContent, List<Object> tools) {
         this.chatClient = chatClient;
         this.promptContent = promptContent;
+        this.tools = List.copyOf(tools);
     }
 
     /**
@@ -48,6 +50,11 @@ abstract class ReactAgentStepExecutor {
      * The builder already has chatClient and default hooks configured.
      */
     protected Builder configureAgent(Builder builder) {
+        if (!tools.isEmpty()) {
+            builder = builder
+                    .methodTools(tools.toArray())
+                    .interceptors(new ToolRetryInterceptor(2));
+        }
         return builder;
     }
 
