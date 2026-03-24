@@ -21,6 +21,7 @@ import org.springframework.stereotype.Component;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -87,13 +88,13 @@ public class StepExecutorRouter implements StepExecutorPort {
         // ReactAgent executors (primary path)
         this.reactExecutors = Map.of(
                 StepType.THINK, new ReactAgentThinkExecutor(
-                        primaryClients.get(StepType.THINK), thinkContent, webSearchTool),
+                        primaryClients.get(StepType.THINK), thinkContent, List.of(webSearchTool)),
                 StepType.RESEARCH, new ReactAgentResearchExecutor(
-                        primaryClients.get(StepType.RESEARCH), researchContent, gitHubSearchTool, webSearchTool),
+                        primaryClients.get(StepType.RESEARCH), researchContent, List.of(gitHubSearchTool, webSearchTool)),
                 StepType.WRITE, new ReactAgentWriteExecutor(
-                        primaryClients.get(StepType.WRITE), writeContent),
+                        primaryClients.get(StepType.WRITE), writeContent, List.of()),
                 StepType.NOTIFY, new ReactAgentNotifyExecutor(
-                        primaryClients.get(StepType.NOTIFY), notifyContent, webhookNotifyTool));
+                        primaryClients.get(StepType.NOTIFY), notifyContent, List.of(webhookNotifyTool)));
 
         // LLM executors (fallback path)
         this.llmExecutors = Map.of(

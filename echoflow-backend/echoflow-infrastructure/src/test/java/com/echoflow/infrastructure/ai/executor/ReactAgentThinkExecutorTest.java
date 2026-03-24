@@ -5,7 +5,6 @@ import com.alibaba.cloud.ai.graph.exception.GraphRunnerException;
 import com.echoflow.application.execution.StepExecutionContext;
 import com.echoflow.application.execution.StepExecutionException;
 import com.echoflow.domain.execution.StepType;
-import com.echoflow.infrastructure.ai.tool.WebSearchTool;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
@@ -35,11 +34,8 @@ class ReactAgentThinkExecutorTest {
     @Mock
     private ChatClient chatClient;
 
-    @Mock
-    private WebSearchTool webSearchTool;
-
     private ReactAgentThinkExecutor createExecutor(String promptContent) {
-        return new ReactAgentThinkExecutor(chatClient, promptContent, webSearchTool) {
+        return new ReactAgentThinkExecutor(chatClient, promptContent, List.of()) {
             @Override
             protected ReactAgent buildAgent() {
                 return reactAgent;
@@ -118,7 +114,7 @@ class ReactAgentThinkExecutorTest {
 
     @Test
     void agent_name_is_think_executor() {
-        var executor = new ReactAgentThinkExecutor(chatClient, "prompt", webSearchTool);
+        var executor = new ReactAgentThinkExecutor(chatClient, "prompt", List.of());
         assertThat(executor.agentName()).isEqualTo("think_executor");
     }
 }

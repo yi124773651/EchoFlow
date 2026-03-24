@@ -5,8 +5,6 @@ import com.alibaba.cloud.ai.graph.exception.GraphRunnerException;
 import com.echoflow.application.execution.StepExecutionContext;
 import com.echoflow.application.execution.StepExecutionException;
 import com.echoflow.domain.execution.StepType;
-import com.echoflow.infrastructure.ai.tool.GitHubSearchTool;
-import com.echoflow.infrastructure.ai.tool.WebSearchTool;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
@@ -36,15 +34,8 @@ class ReactAgentResearchExecutorTest {
     @Mock
     private ChatClient chatClient;
 
-    @Mock
-    private GitHubSearchTool gitHubSearchTool;
-
-    @Mock
-    private WebSearchTool webSearchTool;
-
     private ReactAgentResearchExecutor createExecutor(String promptContent) {
-        return new ReactAgentResearchExecutor(chatClient, promptContent,
-                gitHubSearchTool, webSearchTool) {
+        return new ReactAgentResearchExecutor(chatClient, promptContent, List.of()) {
             @Override
             protected ReactAgent buildAgent() {
                 return reactAgent;
@@ -110,8 +101,7 @@ class ReactAgentResearchExecutorTest {
 
     @Test
     void agent_name_is_research_executor() {
-        var executor = new ReactAgentResearchExecutor(chatClient, "prompt",
-                gitHubSearchTool, webSearchTool);
+        var executor = new ReactAgentResearchExecutor(chatClient, "prompt", List.of());
         assertThat(executor.agentName()).isEqualTo("research_executor");
     }
 }

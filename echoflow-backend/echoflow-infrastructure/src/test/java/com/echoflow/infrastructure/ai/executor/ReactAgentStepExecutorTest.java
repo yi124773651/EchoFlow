@@ -40,7 +40,7 @@ class ReactAgentStepExecutorTest {
      * Concrete test subclass — uses the default formatUserMessage (all placeholders).
      */
     private ReactAgentStepExecutor createExecutor(String promptContent) {
-        return new ReactAgentStepExecutor(chatClient, promptContent) {
+        return new ReactAgentStepExecutor(chatClient, promptContent, List.of()) {
             @Override
             protected String agentName() {
                 return "test_executor";
